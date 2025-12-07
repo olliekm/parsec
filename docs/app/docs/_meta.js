@@ -9,6 +9,6 @@ export default {
   'prompt-templates': 'Prompt Templates',
   'caching': 'Caching',
   'dataset-collection': 'Dataset Collection',
-  'testing': 'Testing',
+  'testing': 'A/B Testing',
   'logging': 'Logging'
 }

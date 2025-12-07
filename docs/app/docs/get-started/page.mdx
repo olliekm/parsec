@@ -24,6 +24,10 @@ adapter = AnthropicAdapter(api_key="your-key", model="claude-3-5-sonnet-20241022
 # Gemini
 from parsec.models.adapters import GeminiAdapter
 adapter = GeminiAdapter(api_key="your-key", model="gemini-pro")
+
+# Ollama
+from parsec.models.adapters import OllamaAdapter
+adapter = OllamaAdapter(model="llama3", base_url="http://localhost:11434")
 ```
 
 ## Enforce Structure

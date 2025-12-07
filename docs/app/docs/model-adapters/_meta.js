@@ -2,5 +2,6 @@ export default {
   index: 'Overview',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
-  gemini: 'Gemini'
+  gemini: 'Gemini',
+  ollama: 'Ollama',
 }
