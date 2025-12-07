@@ -7,7 +7,7 @@ type Props = {}
 function Logo({}: Props) {
   return (
     <div className='flex'>
-        <span className=' font-bold text-xl self-center'>parsec</span>
+        <span className=' font-light text-xl self-center'>parsec</span>
     </div>
   )
 }

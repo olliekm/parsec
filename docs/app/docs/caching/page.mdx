@@ -18,7 +18,7 @@ Parsec's caching system stores successful enforcement results, eliminating redun
 
 ```python
 from parsec.cache import InMemoryCache
-from parsec.enforcement import EnforcementEngine
+from parsec import EnforcementEngine
 
 # Create cache with max 100 entries, 1 hour TTL
 cache = InMemoryCache(max_size=100, default_ttl=3600)

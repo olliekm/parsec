@@ -1,0 +1,446 @@
+---
+title: "Analytics"
+description: "Track performance metrics and optimize prompt templates with data-driven insights"
+---
+
+# Analytics
+
+Track prompt template performance with comprehensive metrics. Monitor success rates, latency, token usage, and errors to optimize your LLM applications.
+
+## Quick Start
+
+```python
+from parsec.prompts import TemplateAnalytics, TemplateManager
+from parsec.models.adapters import OpenAIAdapter
+from parsec.validators import PydanticValidator
+from parsec import EnforcementEngine
+from pydantic import BaseModel
+
+# Create analytics tracker
+analytics = TemplateAnalytics()
+
+# Create manager with analytics
+manager = TemplateManager(analytics=analytics)
+
+# Setup engine
+adapter = OpenAIAdapter(api_key="your-key", model="gpt-4o-mini")
+validator = PydanticValidator()
+engine = EnforcementEngine(adapter, validator)
+
+# Define schema
+class UserInfo(BaseModel):
+    name: str
+    email: str
+
+# Register template
+manager.register_template(
+    name="user_extractor",
+    template="Extract user info: {text}",
+    version="1.0.0",
+    schema=UserInfo
+)
+
+# Use template - metrics tracked automatically
+template = manager.get_template("user_extractor", "1.0.0")
+result = await template.render(engine=engine, text="John at john@example.com")
+
+# View metrics
+metrics = analytics.get_metrics("user_extractor", "1.0.0")
+print(f"Success rate: {metrics.success_rate:.2%}")
+print(f"Average latency: {metrics.average_latency_ms:.0f}ms")
+print(f"P95 latency: {metrics.p95_latency_ms:.0f}ms")
+```
+
+## Template Metrics
+
+### Core Metrics
+
+```python
+metrics = analytics.get_metrics("email_generator", "2.1.0")
+
+# Call statistics
+print(f"Total calls: {metrics.total_calls}")
+print(f"Successful: {metrics.successful_calls}")
+print(f"Failed: {metrics.failed_calls}")
+print(f"Success rate: {metrics.success_rate:.2%}")
+
+# Token usage
+print(f"Total tokens: {metrics.total_tokens}")
+print(f"Average tokens/call: {metrics.average_tokens:.0f}")
+
+# Latency
+print(f"Average latency: {metrics.average_latency_ms:.0f}ms")
+print(f"P95 latency: {metrics.p95_latency_ms:.0f}ms")
+print(f"P99 latency: {metrics.p99_latency_ms:.0f}ms")
+
+# Retries
+print(f"Average retries: {metrics.average_retries:.2f}")
+```
+
+### Latency Percentiles
+
+```python
+metrics = analytics.get_metrics("content_classifier")
+
+# 95% of calls complete within this time
+p95 = metrics.p95_latency_ms
+print(f"P95 latency: {p95:.0f}ms")
+
+# 99% of calls complete within this time
+p99 = metrics.p99_latency_ms
+print(f"P99 latency: {p99:.0f}ms")
+
+# SLA monitoring
+if p95 > 2000:  # 2 second SLA
+    print("⚠️ P95 latency exceeds SLA")
+```
+
+### Error Analysis
+
+```python
+metrics = analytics.get_metrics("json_extractor", "1.0.0")
+
+# Get error breakdown
+error_breakdown = metrics.get_error_breakdown()
+
+for error_type, count in error_breakdown.items():
+    print(f"{error_type}: {count} occurrences")
+
+# Example output:
+# ValidationError: Field 'email' is required: 42 occurrences
+# ValidationError: Invalid date format: 15 occurrences
+# ValidationError: Value must be positive: 8 occurrences
+```
+
+## Template Analytics
+
+### Recording Results Manually
+
+Metrics are automatically tracked when using `TemplateManager`, but you can record manually:
+
+```python
+from parsec.prompts import TemplateAnalytics
+
+analytics = TemplateAnalytics()
+
+# Record successful call
+analytics.record_result(
+    template_name="summarizer",
+    version="1.0.0",
+    success=True,
+    tokens_used=1250,
+    latency_ms=850.5,
+    retry_count=0
+)
+
+# Record failed call
+analytics.record_result(
+    template_name="summarizer",
+    version="1.0.0",
+    success=False,
+    tokens_used=300,
+    latency_ms=450.2,
+    retry_count=2,
+    validation_errors=["ValidationError: Field 'summary' is required"]
+)
+```
+
+### Retrieving Metrics
+
+```python
+# Get metrics for specific version
+metrics = analytics.get_metrics("email_writer", "2.0.0")
+
+if metrics:
+    print(f"Success rate: {metrics.success_rate:.2%}")
+else:
+    print("No data for this version")
+
+# Get combined metrics across all versions
+all_versions = analytics.get_metrics("email_writer")
+print(f"Total calls across all versions: {all_versions.total_calls}")
+print(f"Overall success rate: {all_versions.success_rate:.2%}")
+```
+
+### Comparing Versions
+
+```python
+# Get metrics for all versions
+versions = analytics.compare_versions("content_generator")
+
+for version, metrics in versions.items():
+    print(f"\nVersion {version}:")
+    print(f"  Calls: {metrics.total_calls}")
+    print(f"  Success rate: {metrics.success_rate:.2%}")
+    print(f"  Avg latency: {metrics.average_latency_ms:.0f}ms")
+    print(f"  Avg tokens: {metrics.average_tokens:.0f}")
+
+# Example output:
+# Version 1.0.0:
+#   Calls: 1523
+#   Success rate: 94.30%
+#   Avg latency: 1250ms
+#   Avg tokens: 850
+#
+# Version 2.0.0:
+#   Calls: 892
+#   Success rate: 97.80%
+#   Avg latency: 980ms
+#   Avg tokens: 720
+```
+
+### Finding Best Version
+
+```python
+# Find version with highest success rate (default)
+best = analytics.get_best_performing_version("summarizer")
+print(f"Best version: {best.version}")
+print(f"Success rate: {best.success_rate:.2%}")
+
+# Find version with lowest latency
+fastest = analytics.get_best_performing_version("summarizer", "average_latency_ms")
+print(f"Fastest version: {fastest.version}")
+print(f"Avg latency: {fastest.average_latency_ms:.0f}ms")
+
+# Find version with lowest token usage
+cheapest = analytics.get_best_performing_version("summarizer", "average_tokens")
+print(f"Most efficient version: {cheapest.version}")
+print(f"Avg tokens: {cheapest.average_tokens:.0f}")
+```
+
+### All Metrics
+
+```python
+all_metrics = analytics.get_all_metrics()
+
+for template_key, metrics in all_metrics.items():
+    print(f"{template_key}:")
+    print(f"  Success rate: {metrics.success_rate:.2%}")
+    print(f"  Total calls: {metrics.total_calls}")
+```
+
+## Performance Optimization
+
+### Find Slow Templates
+
+```python
+def find_slow_templates(analytics: TemplateAnalytics, threshold_ms: float = 2000):
+    """Find templates exceeding latency threshold."""
+    slow_templates = []
+
+    for template_key, metrics in analytics.get_all_metrics().items():
+        if metrics.p95_latency_ms > threshold_ms:
+            slow_templates.append({
+                "template": template_key,
+                "p95_latency": metrics.p95_latency_ms,
+                "avg_latency": metrics.average_latency_ms
+            })
+
+    slow_templates.sort(key=lambda x: x["p95_latency"], reverse=True)
+    return slow_templates
+
+# Find and optimize slow templates
+slow = find_slow_templates(analytics, threshold_ms=1500)
+for template in slow:
+    print(f"{template['template']}: P95={template['p95_latency']:.0f}ms")
+```
+
+### Find High-Cost Templates
+
+```python
+def find_expensive_templates(analytics: TemplateAnalytics, threshold_tokens: int = 1000):
+    """Find templates with high token usage."""
+    expensive = []
+
+    for template_key, metrics in analytics.get_all_metrics().items():
+        if metrics.average_tokens > threshold_tokens:
+            expensive.append({
+                "template": template_key,
+                "avg_tokens": metrics.average_tokens,
+                "total_tokens": metrics.total_tokens
+            })
+
+    expensive.sort(key=lambda x: x["total_tokens"], reverse=True)
+    return expensive
+
+# Find templates to optimize for cost
+expensive = find_expensive_templates(analytics, threshold_tokens=800)
+for template in expensive:
+    print(f"{template['template']}: avg={template['avg_tokens']:.0f}")
+```
+
+## Production Monitoring
+
+### Performance Alerts
+
+```python
+class PerformanceAlerts:
+    def __init__(self, analytics: TemplateAnalytics):
+        self.analytics = analytics
+        self.thresholds = {
+            "success_rate": 0.95,
+            "p95_latency_ms": 2000,
+            "average_tokens": 1000
+        }
+
+    def check_alerts(self) -> List[dict]:
+        alerts = []
+
+        for template_key, metrics in self.analytics.get_all_metrics().items():
+            # Check success rate
+            if metrics.success_rate < self.thresholds["success_rate"]:
+                alerts.append({
+                    "template": template_key,
+                    "alert": "low_success_rate",
+                    "value": metrics.success_rate
+                })
+
+            # Check latency
+            if metrics.p95_latency_ms > self.thresholds["p95_latency_ms"]:
+                alerts.append({
+                    "template": template_key,
+                    "alert": "high_latency",
+                    "value": metrics.p95_latency_ms
+                })
+
+            # Check tokens
+            if metrics.average_tokens > self.thresholds["average_tokens"]:
+                alerts.append({
+                    "template": template_key,
+                    "alert": "high_token_usage",
+                    "value": metrics.average_tokens
+                })
+
+        return alerts
+
+# Check for issues
+alerter = PerformanceAlerts(analytics)
+alerts = alerter.check_alerts()
+
+for alert in alerts:
+    print(f"⚠️ {alert['template']}: {alert['alert']}")
+    print(f"   Value: {alert['value']:.2f}")
+```
+
+### Export Metrics
+
+```python
+import json
+from datetime import datetime
+
+def export_metrics_json(analytics: TemplateAnalytics, filepath: str):
+    """Export metrics to JSON for external analysis."""
+    data = {
+        "exported_at": datetime.now().isoformat(),
+        "templates": {}
+    }
+
+    for template_key, metrics in analytics.get_all_metrics().items():
+        data["templates"][template_key] = {
+            "total_calls": metrics.total_calls,
+            "success_rate": metrics.success_rate,
+            "average_latency_ms": metrics.average_latency_ms,
+            "p95_latency_ms": metrics.p95_latency_ms,
+            "p99_latency_ms": metrics.p99_latency_ms,
+            "average_tokens": metrics.average_tokens,
+            "total_tokens": metrics.total_tokens,
+            "error_breakdown": metrics.get_error_breakdown()
+        }
+
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2)
+
+# Export for analysis
+export_metrics_json(analytics, "./metrics_export.json")
+```
+
+## API Reference
+
+### TemplateMetrics
+
+```python
+@dataclass
+class TemplateMetrics:
+    template_name: str
+    version: str
+    total_calls: int = 0
+    successful_calls: int = 0
+    failed_calls: int = 0
+    total_tokens: int = 0
+    total_latency_ms: float = 0.0
+    retry_counts: List[int]
+    validation_errors: List[str]
+    timestamps: List[datetime]
+    latencies: List[float]
+
+    @property
+    def success_rate(self) -> float:
+        """Success rate between 0 and 1."""
+
+    @property
+    def average_latency_ms(self) -> float:
+        """Average latency in milliseconds."""
+
+    @property
+    def average_tokens(self) -> float:
+        """Average tokens per call."""
+
+    @property
+    def average_retries(self) -> float:
+        """Average retries per call."""
+
+    @property
+    def p95_latency_ms(self) -> float:
+        """95th percentile latency."""
+
+    @property
+    def p99_latency_ms(self) -> float:
+        """99th percentile latency."""
+
+    def get_error_breakdown(self) -> Dict[str, int]:
+        """Breakdown of validation errors."""
+```
+
+### TemplateAnalytics
+
+```python
+class TemplateAnalytics:
+    def __init__(self)
+
+    def record_result(
+        self,
+        template_name: str,
+        version: str,
+        success: bool,
+        tokens_used: int,
+        latency_ms: float,
+        retry_count: int,
+        validation_errors: Optional[List[str]] = None
+    ) -> None:
+        """Record template execution result."""
+
+    def get_metrics(
+        self,
+        template_name: str,
+        version: Optional[str] = None
+    ) -> Optional[TemplateMetrics]:
+        """
+        Get metrics for template.
+
+        If version specified: returns metrics for that version
+        If version is None: returns aggregated metrics across all versions
+        """
+
+    def get_all_metrics(self) -> Dict[str, TemplateMetrics]:
+        """Get metrics for all templates and versions."""
+
+    def compare_versions(self, template_name: str) -> Dict[str, TemplateMetrics]:
+        """Compare metrics across all versions of template."""
+
+    def get_best_performing_version(
+        self,
+        template_name: str,
+        metric: str = "success_rate"
+    ) -> Optional[TemplateMetrics]:
+        """Find best performing version for given metric."""
+```

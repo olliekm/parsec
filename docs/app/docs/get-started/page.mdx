@@ -32,7 +32,7 @@ Define your schema and get validated output:
 
 ```python
 from parsec.validators import JSONValidator
-from parsec.enforcement import EnforcementEngine
+from parsec import EnforcementEngine
 
 # Set up enforcement
 validator = JSONValidator()
@@ -125,10 +125,12 @@ registry.save_to_disk("templates.yaml")
 
 ### Production Features
 - [Prompt Templates](../prompt-templates) - Version-controlled, reusable prompts
+- [Analytics](../analytics) - Track performance metrics and optimize templates
+- [A/B Testing](../testing) - Test and compare prompt variations
+- [Resilience](../resilience) - Circuit breakers, retry policies, and failover
 - [Caching](../caching) - Reduce API costs and improve performance
 - [Dataset Collection](../dataset-collection) - Collect training data automatically
 - [Logging](../logging) - Monitor performance and debug issues
-- [Testing](../testing) - Write tests for your structured outputs
 
 ### Core Concepts
 - [Model Adapters](../model-adapters) - OpenAI, Anthropic, and Gemini integration

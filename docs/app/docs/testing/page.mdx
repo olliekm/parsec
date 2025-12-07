@@ -1,387 +1,482 @@
-# Testing
+---
+title: "A/B Testing"
+description: "Test and optimize prompt templates with statistical significance testing"
+---
 
-Comprehensive guide to testing **parsec** components, including adapters, validators, and the enforcement engine.
+# A/B Testing
 
-## Overview
+Parsec includes built-in A/B testing infrastructure for prompt templates with statistical significance testing. Compare different template versions and make data-driven decisions about which prompts perform best.
 
-The parsec project uses **pytest** for testing with async support, mocking, and coverage reporting. Tests are organized by component type and use mocking to avoid real API calls.
-
-## Running Tests
-
-### Run All Tests
-
-```bash
-pytest
-```
-
-### Run with Verbose Output
-
-```bash
-pytest -v
-```
-
-### Run with Coverage
-
-```bash
-pytest --cov=src/parsec --cov-report=html
-```
-
-### Run Specific Test File
-
-```bash
-pytest tests/unit/adapters/test_openai_adapter.py
-```
-
-### Run Specific Test
-
-```bash
-pytest tests/unit/adapters/test_openai_adapter.py::TestOpenAIAdapter::test_generate
-```
-
-## Test Structure
-
-```
-tests/
-├── conftest.py              # Shared fixtures and test configuration
-├── unit/
-│   ├── adapters/
-│   │   ├── test_openai_adapter.py
-│   │   ├── test_anthropic_adapter.py
-│   │   └── test_gemini_adapter.py
-│   ├── validators/
-│   │   ├── test_json_validator.py
-│   │   └── test_pydantic_validator.py
-│   └── enforcement/
-│       └── test_engine.py
-└── integration/
-    └── test_end_to_end.py
-```
-
-## Testing Adapters
-
-### Why Mock Adapters?
-
-- **Cost**: Avoid API charges during testing
-- **Speed**: Tests run instantly without network calls
-- **Reliability**: No rate limits or API downtime
-- **Isolation**: Test your code, not external APIs
-
-### Basic Adapter Test Pattern
+## Quick Start
 
 ```python
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from parsec.prompts import (
+    TemplateManager,
+    TemplateAnalytics,
+    ABTest,
+    Variant,
+    TrafficSplitStrategy
+)
 from parsec.models.adapters import OpenAIAdapter
-from parsec.core import GenerationResponse
+from parsec.validators import PydanticValidator
+from parsec import EnforcementEngine
+from pydantic import BaseModel
 
-class TestOpenAIAdapter:
+# Setup
+adapter = OpenAIAdapter(api_key="your-key", model="gpt-4o-mini")
+validator = PydanticValidator()
+engine = EnforcementEngine(adapter, validator)
 
-    @pytest.mark.asyncio
-    @patch('parsec.models.adapters.openai_adapter.AsyncOpenAI')
-    async def test_generate(self, mock_openai_class):
-        # 1. Create mock client
-        mock_client = AsyncMock()
+analytics = TemplateAnalytics()
+manager = TemplateManager(analytics=analytics)
 
-        # 2. Define mock response matching API structure
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock(
-            message=MagicMock(content='{"name": "John"}'),
-            finish_reason="stop"
-        )]
-        mock_response.usage = MagicMock(
-            prompt_tokens=10,
-            completion_tokens=15,
-            total_tokens=25
-        )
+# Define output schema
+class Email(BaseModel):
+    subject: str
+    body: str
 
-        # 3. Connect mocks
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_class.return_value = mock_client
+# Register template versions to test
+manager.register_template(
+    name="email_writer",
+    template="Write a professional email about {topic}.",
+    version="1.0.0",
+    schema=Email
+)
 
-        # 4. Create adapter (gets mock client)
-        adapter = OpenAIAdapter(api_key="test", model="gpt-4")
+manager.register_template(
+    name="email_writer",
+    template="Write a {tone} email about {topic}. Be {style}.",
+    version="2.0.0",
+    schema=Email
+)
 
-        # 5. Call method under test
-        result = await adapter.generate("Hello")
+# Create A/B test
+variants = [
+    Variant(template_name="email_writer", version="1.0.0"),
+    Variant(template_name="email_writer", version="2.0.0")
+]
 
-        # 6. Verify behavior
-        assert isinstance(result, GenerationResponse)
-        assert result.output == '{"name": "John"}'
-        assert result.tokens_used == 25
+ab_test = ABTest(
+    test_name="email_writer_test",
+    variants=variants,
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.UNIFORM
+)
 
-        # 7. Verify mock was called correctly
-        mock_client.chat.completions.create.assert_called_once()
+# Production: select variant for each request
+variant = ab_test.select_variant()
+template = manager.get_template(variant.template_name, variant.version)
+result = await template.render(engine=engine, topic="project deadline")
+
+# After collecting data: analyze results
+results = ab_test.get_results()
+
+if results.is_significant:
+    print(f"Winner: {results.winner.version}")
+    print(f"Confidence: {results.confidence:.2%}")
 ```
 
-### Testing with Schema
+## Traffic Split Strategies
+
+### Uniform Distribution
+
+Split traffic evenly across all variants:
 
 ```python
-@pytest.mark.asyncio
-@patch('parsec.models.adapters.openai_adapter.AsyncOpenAI')
-async def test_generate_with_schema(self, mock_openai_class):
-    # Setup mocks (same as above)
-    # ...
+ab_test = ABTest(
+    test_name="my_test",
+    variants=[variant_a, variant_b, variant_c],
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.UNIFORM
+)
 
-    schema = {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"]
-    }
-
-    result = await adapter.generate("Hello", schema=schema)
-
-    # Verify response_format was set
-    call_args = mock_client.chat.completions.create.call_args
-    assert 'response_format' in call_args.kwargs
-    assert call_args.kwargs['response_format']['type'] == 'json_object'
+# Each variant gets ~33% of traffic
 ```
 
-### Testing Streaming
+### Weighted Distribution
+
+Custom traffic allocation for gradual rollouts:
 
 ```python
-@pytest.mark.asyncio
-@patch('parsec.models.adapters.openai_adapter.AsyncOpenAI')
-async def test_generate_stream(self, mock_openai_class):
-    mock_client = AsyncMock()
+variants = [
+    Variant("template", "1.0.0", weight=0.8),  # 80% traffic
+    Variant("template", "2.0.0", weight=0.2)   # 20% traffic
+]
 
-    # Create async generator for streaming
-    async def mock_stream():
-        chunks = ['{"name":', ' "John"', '}']
-        for chunk_text in chunks:
-            chunk = MagicMock()
-            chunk.choices = [MagicMock(
-                delta=MagicMock(content=chunk_text)
-            )]
-            yield chunk
-
-    mock_client.chat.completions.create.return_value = mock_stream()
-    mock_openai_class.return_value = mock_client
-
-    adapter = OpenAIAdapter(api_key="test", model="gpt-4")
-
-    # Collect streamed chunks
-    chunks = []
-    async for chunk in adapter.generate_stream("Hello"):
-        chunks.append(chunk)
-
-    assert ''.join(chunks) == '{"name": "John"}'
+ab_test = ABTest(
+    test_name="my_test",
+    variants=variants,
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.WEIGHTED
+)
 ```
 
-### Testing Error Handling
+Use weighted distribution to:
+- Gradually roll out new versions (95/5 → 80/20 → 50/50)
+- Minimize risk of untested versions
+- Conduct "champion/challenger" testing
+
+### Epsilon-Greedy
+
+Automatically optimize over time with exploration:
 
 ```python
-@pytest.mark.asyncio
-@patch('parsec.models.adapters.openai_adapter.AsyncOpenAI')
-async def test_generate_api_error(self, mock_openai_class):
-    mock_client = AsyncMock()
+ab_test = ABTest(
+    test_name="my_test",
+    variants=[variant_a, variant_b],
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.EPSILON_GREEDY
+)
 
-    # Make the API call raise an exception
-    mock_client.chat.completions.create.side_effect = Exception("API Error")
-    mock_openai_class.return_value = mock_client
-
-    adapter = OpenAIAdapter(api_key="test", model="gpt-4")
-
-    # Verify exception is raised
-    with pytest.raises(Exception, match="API Error"):
-        await adapter.generate("Hello")
+# 90% traffic to best performing variant
+# 10% traffic randomly distributed (exploration)
 ```
 
-## Testing Validators
+Best for:
+- Automatic optimization
+- Adapting to changing conditions
+- Continuous learning scenarios
 
-### JSON Validator Tests
+## Statistical Significance
+
+Parsec uses two-proportion z-tests to determine if differences are statistically significant:
 
 ```python
-from parsec.validators import JSONValidator
-from parsec.validators.base_validator import ValidationStatus
+ab_test = ABTest(
+    test_name="conversion_test",
+    variants=[control, treatment],
+    analytics=analytics,
+    min_sample_size=100,        # Minimum calls before declaring winner
+    significance_level=0.05      # p < 0.05 required (95% confidence)
+)
 
-def test_validate_valid_json():
-    validator = JSONValidator()
-    schema = {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"]
-    }
+# Get results
+results = ab_test.get_results()
 
-    result = validator.validate('{"name": "John"}', schema)
+if results.is_significant:
+    print(f"Winner: {results.winner.version}")
+    print(f"Confidence: {results.confidence:.2%}")
 
-    assert result.status == ValidationStatus.VALID
-    assert result.parsed_output == {"name": "John"}
-    assert result.errors == []
-
-def test_validate_invalid_json():
-    validator = JSONValidator()
-    schema = {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"]
-    }
-
-    result = validator.validate('{"age": 30}', schema)
-
-    assert result.status == ValidationStatus.INVALID
-    assert len(result.errors) > 0
+    # View metrics
+    winner_key = f"{results.winner.template_name}:{results.winner.version}"
+    winner_metrics = results.metrics_by_variant[winner_key]
+    print(f"Success rate: {winner_metrics.success_rate:.2%}")
 ```
 
-## Testing Enforcement Engine
+## Understanding Results
 
 ```python
-@pytest.mark.asyncio
-async def test_enforcement_engine_success():
-    # Use real validator, mock adapter
-    validator = JSONValidator()
+results = ab_test.get_results()
 
-    mock_adapter = AsyncMock()
-    mock_response = MagicMock()
-    mock_response.output = '{"name": "John"}'
-    mock_adapter.generate.return_value = mock_response
+# Check if test has enough data
+if results.sample_size < ab_test.min_sample_size:
+    print(f"Need {ab_test.min_sample_size - results.sample_size} more samples")
+    # Continue collecting data
 
-    engine = EnforcementEngine(mock_adapter, validator, max_retries=3)
+# Check for statistical significance
+elif results.is_significant:
+    print(f"✅ Significant difference found!")
+    print(f"Winner: {results.winner.version}")
+    print(f"Confidence: {results.confidence:.2%}")
 
-    schema = {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"]
-    }
-
-    result = await engine.enforce("Extract name", schema)
-
-    assert result.status == ValidationStatus.VALID
-    assert result.parsed_output == {"name": "John"}
+else:
+    print(f"No significant difference detected")
+    print(f"Variants perform similarly")
 ```
 
-## Shared Fixtures
+## Comparing Metrics
 
-Define reusable fixtures in `conftest.py`:
+View detailed metrics for each variant:
 
 ```python
-import pytest
-from unittest.mock import AsyncMock, MagicMock
+results = ab_test.get_results()
 
-@pytest.fixture
-def simple_schema():
-    return {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"]
-    }
-
-@pytest.fixture
-def mock_openai_response():
-    response = MagicMock()
-    response.choices = [MagicMock(
-        message=MagicMock(content='{"name": "John"}')
-    )]
-    response.usage = MagicMock(total_tokens=25)
-    return response
+for variant_key, metrics in results.metrics_by_variant.items():
+    print(f"\n{variant_key}:")
+    print(f"  Success rate: {metrics.success_rate:.2%}")
+    print(f"  Avg latency: {metrics.average_latency_ms:.0f}ms")
+    print(f"  Avg tokens: {metrics.average_tokens:.0f}")
+    print(f"  Total calls: {metrics.total_calls}")
 ```
 
-## Coverage Goals
-
-- **Unit Tests**: 80%+ coverage for all modules
-- **Integration Tests**: Cover key end-to-end workflows
-- **Adapter Tests**: Test all methods (generate, generate_stream, health_check)
-- **Validator Tests**: Test valid, invalid, and edge cases
-- **Engine Tests**: Test retry logic, validation flow, error handling
-
-## Common Testing Patterns
-
-### 1. Test Initialization
+## Complete Workflow
 
 ```python
-def test_adapter_initialization():
-    adapter = OpenAIAdapter(api_key="test", model="gpt-4")
-    assert adapter.api_key == "test"
-    assert adapter.model == "gpt-4"
-    assert adapter.provider == ModelProviders.OPENAI
+from parsec.prompts import TemplateManager, TemplateAnalytics, ABTest, Variant, TrafficSplitStrategy
+from parsec.models.adapters import OpenAIAdapter
+from parsec.validators import PydanticValidator
+from parsec import EnforcementEngine
+from pydantic import BaseModel
+
+# 1. Setup
+adapter = OpenAIAdapter(api_key="your-key", model="gpt-4o-mini")
+validator = PydanticValidator()
+engine = EnforcementEngine(adapter, validator)
+
+analytics = TemplateAnalytics()
+manager = TemplateManager(analytics=analytics)
+
+class EmailOutput(BaseModel):
+    subject: str
+    body: str
+
+# 2. Register template versions
+manager.register_template(
+    name="email_writer",
+    template="Write a professional email about {topic}.",
+    version="1.0.0",
+    schema=EmailOutput
+)
+
+manager.register_template(
+    name="email_writer",
+    template="Write a {tone} email about {topic}. Be {style}.",
+    version="2.0.0",
+    schema=EmailOutput
+)
+
+# 3. Create A/B test
+variants = [
+    Variant("email_writer", "1.0.0", weight=0.5),
+    Variant("email_writer", "2.0.0", weight=0.5)
+]
+
+ab_test = ABTest(
+    test_name="email_writer_improvement",
+    variants=variants,
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.WEIGHTED,
+    min_sample_size=100
+)
+
+# 4. Use in production
+async def generate_email(topic: str):
+    variant = ab_test.select_variant()
+    template = manager.get_template(variant.template_name, variant.version)
+
+    result = await template.render(
+        engine=engine,
+        topic=topic,
+        tone="professional",  # Only used by v2.0.0
+        style="concise"       # Only used by v2.0.0
+    )
+
+    return result
+
+# 5. Collect data
+for topic in topics:
+    await generate_email(topic)
+
+# 6. Analyze results
+results = ab_test.get_results()
+
+if results.is_significant and results.winner:
+    print(f"Winner: {results.winner.version}")
+    print(f"Confidence: {results.confidence:.2%}")
+
+    # View performance
+    winner_key = f"{results.winner.template_name}:{results.winner.version}"
+    metrics = results.metrics_by_variant[winner_key]
+    print(f"Success rate: {metrics.success_rate:.2%}")
+    print(f"Avg latency: {metrics.average_latency_ms:.0f}ms")
 ```
 
-### 2. Test Property Methods
+## Multi-Variant Testing
+
+Test more than two variants simultaneously:
 
 ```python
-def test_supports_native_structure_output():
-    adapter = OpenAIAdapter(api_key="test", model="gpt-4")
-    assert adapter.supports_native_structure_output() == True
+variants = [
+    Variant("classifier", "1.0.0"),  # Original
+    Variant("classifier", "2.0.0"),  # More detailed
+    Variant("classifier", "2.1.0"),  # Simplified
+    Variant("classifier", "3.0.0"),  # Different approach
+]
+
+ab_test = ABTest(
+    test_name="multi_variant_test",
+    variants=variants,
+    analytics=analytics,
+    strategy=TrafficSplitStrategy.UNIFORM,
+    min_sample_size=200  # Higher sample size for more variants
+)
+
+# Winner declared only if significantly better than ALL variants
 ```
 
-### 3. Test Async Methods
+## Gradual Rollout Pattern
+
+Use weighted distribution for safe rollouts:
 
 ```python
-@pytest.mark.asyncio
-async def test_async_method():
-    # Must use @pytest.mark.asyncio for async tests
-    result = await some_async_function()
-    assert result is not None
-```
+# Week 1: 95/5 split (minimal risk)
+variants = [
+    Variant("template", "1.0.0", weight=0.95),
+    Variant("template", "2.0.0", weight=0.05)
+]
 
-### 4. Test Mock Call Arguments
+# Week 2: If stable, increase to 80/20
+variants = [
+    Variant("template", "1.0.0", weight=0.80),
+    Variant("template", "2.0.0", weight=0.20)
+]
 
-```python
-# Verify exact call
-mock_func.assert_called_once_with(arg1="value1", arg2="value2")
+# Week 3: If good, go to 50/50
+variants = [
+    Variant("template", "1.0.0", weight=0.50),
+    Variant("template", "2.0.0", weight=0.50)
+]
 
-# Verify call happened
-mock_func.assert_called_once()
-
-# Access call arguments
-call_args = mock_func.call_args
-assert call_args.kwargs['model'] == "gpt-4"
+# After significance: 100% to winner
+if results.winner and results.winner.version == "2.0.0":
+    variants = [Variant("template", "2.0.0", weight=1.0)]
 ```
 
 ## Best Practices
 
-1. **Mock External APIs**: Never call real APIs in unit tests
-2. **Match API Structure**: Ensure mocks match actual API response structure
-3. **Test Edge Cases**: Test error conditions, empty inputs, malformed data
-4. **Use Fixtures**: Share common test data and mocks
-5. **Async/Await**: Use `@pytest.mark.asyncio` for async tests
-6. **Descriptive Names**: Name tests clearly (e.g., `test_generate_with_invalid_schema`)
-7. **Verify Logging**: Check that errors are logged correctly
-8. **Clean Up**: Close clients and resources in teardown
+### Sample Size
 
-## Debugging Tests
+- Minimum 30 samples per variant for statistical validity
+- More variants require more samples
+- Higher confidence levels require more samples
+- Consider practical significance, not just statistical
 
-### Run with Print Statements
+### Significance Level
 
-```bash
-pytest -s  # Shows print() output
+```python
+# Standard: 95% confidence (p < 0.05)
+ab_test = ABTest(significance_level=0.05)
+
+# Stringent: 99% confidence (p < 0.01)
+ab_test = ABTest(significance_level=0.01)
+
+# Lenient: 90% confidence (p < 0.10)
+ab_test = ABTest(significance_level=0.10)
 ```
 
-### Run Single Test with Debugging
+Choose based on:
+- Risk tolerance (higher confidence = less risk)
+- Sample size constraints
+- Cost of false positives vs false negatives
 
-```bash
-pytest tests/unit/adapters/test_openai_adapter.py::test_generate -vv -s
+### Running Tests
+
+- Run one test at a time per template
+- Don't stop early when seeing positive results
+- Wait for `min_sample_size` before checking results
+- Consider if the difference is practically meaningful
+
+### Metrics to Optimize
+
+```python
+# Success rate (default)
+best = analytics.get_best_performing_version("template", "success_rate")
+
+# Latency
+fastest = analytics.get_best_performing_version("template", "average_latency_ms")
+
+# Cost
+cheapest = analytics.get_best_performing_version("template", "average_tokens")
 ```
 
-### Use pytest-pdb for Debugging
+Choose your primary metric before starting the test.
 
-```bash
-pytest --pdb  # Drop into debugger on failure
+## Monitoring Tests
+
+Track test progress:
+
+```python
+from datetime import datetime
+
+class ABTestMonitor:
+    def __init__(self, ab_test: ABTest):
+        self.ab_test = ab_test
+        self.start_time = datetime.now()
+
+    def print_status(self):
+        results = self.ab_test.get_results()
+
+        print(f"\n{'='*60}")
+        print(f"A/B Test: {self.ab_test.test_name}")
+        print(f"Started: {self.start_time}")
+        print(f"{'='*60}")
+
+        # Progress
+        progress = (results.sample_size / self.ab_test.min_sample_size) * 100
+        print(f"\nProgress: {progress:.1f}%")
+        print(f"Samples: {results.sample_size}/{self.ab_test.min_sample_size}")
+
+        # Variant performance
+        print(f"\nVariant Performance:")
+        for variant_key, metrics in results.metrics_by_variant.items():
+            print(f"  {variant_key}:")
+            print(f"    Success: {metrics.success_rate:.2%}")
+            print(f"    Calls: {metrics.total_calls}")
+
+        # Conclusion
+        if results.is_significant:
+            print(f"\n✅ Winner: {results.winner.version}")
+            print(f"   Confidence: {results.confidence:.2%}")
+        elif results.sample_size >= self.ab_test.min_sample_size:
+            print(f"\n⚠️  No significant difference")
+        else:
+            print(f"\n⏳ Still collecting data...")
+
+# Usage
+monitor = ABTestMonitor(ab_test)
+monitor.print_status()
 ```
 
-## Continuous Integration
+## API Reference
 
-Tests run automatically on push via GitHub Actions:
+### ABTest
 
-```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python
-        uses: actions/setup-python@v2
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Run tests
-        run: pytest --cov=src/parsec
+```python
+class ABTest:
+    def __init__(
+        self,
+        test_name: str,
+        variants: List[Variant],
+        analytics: TemplateAnalytics,
+        strategy: TrafficSplitStrategy = TrafficSplitStrategy.UNIFORM,
+        min_sample_size: int = 30,
+        significance_level: float = 0.05
+    )
+
+    def select_variant(self) -> Variant:
+        """Select a variant based on traffic split strategy."""
+
+    def get_results(self) -> ABTestResult:
+        """Analyze results and determine winning variant."""
 ```
 
-## Next Steps
+### Variant
 
-- Add tests for your custom adapters
-- Increase coverage to 80%+
-- Add integration tests
-- Set up CI/CD pipeline
+```python
+@dataclass
+class Variant:
+    template_name: str
+    version: str
+    weight: float = 1.0  # Used for WEIGHTED strategy
+```
+
+### ABTestResult
+
+```python
+@dataclass
+class ABTestResult:
+    winner: Optional[Variant]
+    confidence: float
+    metrics_by_variant: Dict[str, TemplateMetrics]
+    is_significant: bool
+    sample_size: int
+```
+
+### TrafficSplitStrategy
+
+```python
+class TrafficSplitStrategy(str, Enum):
+    UNIFORM = "uniform"          # Equal distribution
+    WEIGHTED = "weighted"        # Custom weights
+    EPSILON_GREEDY = "epsilon_greedy"  # Auto-optimize
+```
