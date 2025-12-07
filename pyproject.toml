@@ -10,7 +10,7 @@ authors = [
 maintainers = [
     {name = "Oliver Kwun-Morfitt", email = "oliverkwunmorfitt@gmail.com"}
 ]
-keywords = ["llm", "structured-output", "validation", "json-schema", "openai", "anthropic"]
+keywords = ["llm", "structured-output", "validation", "json-schema", "openai", "anthropic", "resilience", "circuit-breaker", "failover", "analytics", "a-b-testing", "prompt-templates"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -31,6 +31,7 @@ dependencies = [
     "jsonschema>=4.0.0",
     "aiohttp>=3.9.0",
     "pyyaml>=6.0.0",
+    "scipy>=1.10.0",
 ]
 
 [project.urls]
