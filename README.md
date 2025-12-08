@@ -5,7 +5,8 @@
 [![Tests](https://github.com/olliekm/parsec/actions/workflows/test.yml/badge.svg)](https://github.com/olliekm/parsec/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-parsec.olliekm.com-blue)](https://parsec.olliekm.com)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/parsec-llm?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/parsec-llm)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/parsec-llm)
+
 <!-- [![codecov](https://codecov.io/gh/olliekm/parsec/branch/main/graph/badge.svg)](https://codecov.io/gh/olliekm/parsec) -->
 
 ⚡ Lightweight orchestration toolkit to generate, validate, repair and enforce
