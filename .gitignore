@@ -22,3 +22,4 @@ dist/
 build/
 *.egg-info/
 docs/public/_pagefind/
+docs/out/
