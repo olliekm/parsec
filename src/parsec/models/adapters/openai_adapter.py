@@ -2,6 +2,7 @@ from openai import AsyncOpenAI
 from parsec.core import BaseLLMAdapter, GenerationResponse, ModelProviders
 from typing import AsyncIterator
 from parsec.logging import get_logger
+from pydantic import BaseModel
 import time
 import json
 
@@ -41,8 +42,13 @@ class OpenAIAdapter(BaseLLMAdapter):
         extra_args = {}
         if schema and self.supports_native_structure_output():
             extra_args["response_format"] = {"type": "json_object"}
+            # Convert Pydantic model to JSON schema if needed
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                schema_dict = schema.model_json_schema()
+            else:
+                schema_dict = schema
             # Add schema to prompt
-            messages[0]["content"] = f"{prompt}\n\nReturn valid JSON matching this schema: {json.dumps(schema)}"
+            messages[0]["content"] = f"{prompt}\n\nReturn valid JSON matching this schema: {json.dumps(schema_dict)}"
         try:
             response = await client.chat.completions.create(
                 model=self.model,
@@ -85,7 +91,12 @@ class OpenAIAdapter(BaseLLMAdapter):
         extra_args = {}
         if schema and self.supports_native_structure_output():
             extra_args["response_format"] = {"type": "json_object"}
-            messages[0]["content"] = f"{prompt}\n\nReturn valid JSON matching this schema: {json.dumps(schema)}"
+            # Convert Pydantic model to JSON schema if needed
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                schema_dict = schema.model_json_schema()
+            else:
+                schema_dict = schema
+            messages[0]["content"] = f"{prompt}\n\nReturn valid JSON matching this schema: {json.dumps(schema_dict)}"
 
         stream = await client.chat.completions.create(
             model=self.model,

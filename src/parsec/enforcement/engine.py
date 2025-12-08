@@ -107,9 +107,14 @@ class EnforcementEngine:
                 
                 if validation.status == ValidationStatus.VALID:
                     if self.collector:
+                        # Convert Pydantic model to JSON schema for storage
+                        schema_for_storage = schema
+                        if isinstance(schema, type) and issubclass(schema, BaseModel):
+                            schema_for_storage = schema.model_json_schema()
+
                         self.collector.collect({
                             "prompt": prompt,
-                            "json_schema": schema,
+                            "json_schema": schema_for_storage,
                             "response": generation.output,
                             "parsed_output": validation.parsed_output,
                             "success": True,
@@ -154,3 +159,17 @@ class EnforcementEngine:
                 # Will retry on next iteration
                 retry_count += 1
                 continue
+
+        # If we exit the loop without returning, all retries were exhausted
+        # Return the last failed result
+        if last_validation:
+            return EnforcedOutput(
+                data=last_validation.parsed_output,
+                generation=generation,
+                validation=last_validation,
+                retry_count=retry_count,
+                success=False
+            )
+        else:
+            # Should never reach here, but handle it gracefully
+            raise RuntimeError("Enforcement failed: no validation results available")

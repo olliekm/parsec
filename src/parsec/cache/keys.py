@@ -2,6 +2,7 @@
 from typing import Any, Optional
 import hashlib
 import json
+from pydantic import BaseModel
 
 
 def generate_cache_key(
@@ -44,10 +45,20 @@ def generate_cache_key(
         - All components are sorted to ensure deterministic ordering
     """
     normalized_prompt = prompt.strip()
+
+    # Handle Pydantic models by converting to JSON schema
+    if schema:
+        if isinstance(schema, type) and issubclass(schema, BaseModel):
+            schema_str = json.dumps(schema.model_json_schema(), sort_keys=True)
+        else:
+            schema_str = json.dumps(schema, sort_keys=True)
+    else:
+        schema_str = ""
+
     key_components = {
         "prompt": normalized_prompt,
         "model": model,
-        "schema": json.dumps(schema, sort_keys=True) if schema else "",
+        "schema": schema_str,
         "temperature": temperature,
         **kwargs
     }

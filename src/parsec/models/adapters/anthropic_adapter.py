@@ -2,7 +2,9 @@ import anthropic
 from parsec.core import BaseLLMAdapter, GenerationResponse, ModelProviders
 from typing import AsyncIterator
 from parsec.logging import get_logger
+from pydantic import BaseModel
 import time
+import json
 
 class AnthropicAdapter(BaseLLMAdapter):
     """Adapter for Anthropic's API with custom configurations."""
@@ -47,8 +49,12 @@ class AnthropicAdapter(BaseLLMAdapter):
             # Anthropic doesn't have response_format parameter
             # Instead, we need to instruct it via the prompt
             if schema:
-                import json
-                schema_str = json.dumps(schema, indent=2)
+                # Convert Pydantic model to JSON schema if needed
+                if isinstance(schema, type) and issubclass(schema, BaseModel):
+                    schema_dict = schema.model_json_schema()
+                else:
+                    schema_dict = schema
+                schema_str = json.dumps(schema_dict, indent=2)
                 message_params["messages"][0]["content"] = (
                     f"{prompt}\n\n"
                     f"Please respond with valid JSON matching this schema:\n{schema_str}\n"
