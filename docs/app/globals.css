@@ -129,3 +129,147 @@
 html {
   background-color: #f4f3ee;
 }
+
+/* Nextra navbar styling fixes for mobile visibility */
+/* Light mode navbar - target all possible containers */
+nav,
+nav[class*="nav"],
+[class*="navbar"],
+header > nav,
+body > nav,
+html body nav,
+nav > *,
+nav a,
+nav div {
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+/* Light mode navbar parent container with frosted glass */
+nav {
+  background-color: rgba(244, 243, 238, 0.8) !important;
+  background: rgba(244, 243, 238, 0.8) !important;
+  border-bottom: 1px solid rgba(138, 129, 124, 0.3) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+/* Override Nextra theme variables - Light mode */
+:root nav,
+:root nav * {
+  --x-color-nextra-bg: rgba(244, 243, 238, 0.8) !important;
+  --nextra-bg: rgba(244, 243, 238, 0.8) !important;
+}
+
+/* Ensure nav children don't override background, except search input */
+nav > a,
+nav > div:not(:has(input)),
+nav div:not(:has(input)):not(.nextra-search) {
+  background: transparent !important;
+}
+
+/* Keep search input background */
+nav input,
+nav .nextra-search input {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+.dark nav input,
+.dark nav .nextra-search input {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Dark mode navbar parent container with frosted glass */
+.dark nav,
+html.dark nav,
+:root.dark nav {
+  background-color: rgba(23, 24, 32, 0.8) !important;
+  background: rgba(23, 24, 32, 0.8) !important;
+  border-bottom: 1px solid oklch(1 0 0 / 10%) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+/* Override Nextra theme variables - Dark mode */
+.dark nav,
+.dark nav *,
+:root.dark nav,
+:root.dark nav * {
+  --x-color-nextra-bg: rgba(23, 24, 32, 0.8) !important;
+  --nextra-bg: rgba(23, 24, 32, 0.8) !important;
+}
+
+/* Ensure dark mode nav children don't override background, except search */
+.dark nav > a,
+.dark nav > div:not(:has(input)),
+.dark nav div:not(:has(input)):not(.nextra-search) {
+  background: transparent !important;
+}
+
+/* Mobile specific fixes */
+@media (max-width: 1024px) {
+  /* Light mode mobile */
+  nav,
+  nav[class],
+  body nav,
+  header nav {
+    background: rgba(244, 243, 238, 0.8) !important;
+    background-color: rgba(244, 243, 238, 0.8) !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    backdrop-filter: blur(12px) !important;
+  }
+
+  /* Dark mode mobile */
+  .dark nav,
+  .dark nav[class],
+  .dark body nav,
+  .dark header nav,
+  html.dark nav {
+    background: rgba(23, 24, 32, 0.8) !important;
+    background-color: rgba(23, 24, 32, 0.8) !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    backdrop-filter: blur(12px) !important;
+  }
+
+  /* Mobile hamburger menu button - Light mode */
+  nav button,
+  nav button svg,
+  nav [role="button"] svg {
+    color: #463f3a !important;
+    stroke: #463f3a !important;
+    fill: #463f3a !important;
+  }
+
+  /* Mobile hamburger menu button - Dark mode */
+  .dark nav button,
+  .dark nav button svg,
+  .dark nav [role="button"] svg {
+    color: oklch(0.985 0.002 247.839) !important;
+    stroke: oklch(0.985 0.002 247.839) !important;
+    fill: oklch(0.985 0.002 247.839) !important;
+  }
+
+  /* Mobile menu dropdown - Light mode */
+  nav + div,
+  nav ~ div,
+  [class*="menu"],
+  [class*="mobile"] {
+    background-color: #f4f3ee !important;
+    background: #f4f3ee !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Mobile menu dropdown - Dark mode */
+  .dark nav + div,
+  .dark nav ~ div,
+  .dark [class*="menu"],
+  .dark [class*="mobile"] {
+    background-color: rgb(23, 24, 32) !important;
+    background: rgb(23, 24, 32) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
