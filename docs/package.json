@@ -17,7 +17,7 @@
   "scripts": {
     "dev": "next",
     "dev:search": "concurrently \"next\" \"pagefind --site .next --serve\"",
-    "build": "next build && pagefind --site out",
+    "build": "next build && pagefind --site out --output-subdir _pagefind",
     "start": "next start"
   },
   "devDependencies": {
