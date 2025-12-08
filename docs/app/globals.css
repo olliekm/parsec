@@ -273,3 +273,34 @@ html.dark nav,
     backdrop-filter: none !important;
   }
 }
+
+/* Search results styling */
+/* Light mode search results */
+[role="option"]:hover,
+[role="option"][data-headlessui-state*="active"] {
+  background-color: oklch(89.193% 0.00166 66.416 / 0.543) !important;
+  color: oklch(0.302 0.012 56.337) !important;
+}
+
+/* Light mode - highlighted matching text */
+[role="option"] mark,
+[role="option"] [data-pagefind-match] {
+  background-color: oklch(0.828 0.189 84.429) !important;
+  color: oklch(0.302 0.012 56.337) !important;
+  font-weight: 600;
+}
+
+/* Dark mode search results */
+.dark [role="option"]:hover,
+.dark [role="option"][data-headlessui-state*="active"] {
+  background-color: oklch(0.278 0.033 256.848) !important;
+  color: oklch(0.985 0.002 247.839) !important;
+}
+
+/* Dark mode - highlighted matching text */
+.dark [role="option"] mark,
+.dark [role="option"] [data-pagefind-match] {
+  background-color: oklch(0.488 0.243 264.376) !important;
+  color: oklch(0.985 0.002 247.839) !important;
+  font-weight: 600;
+}
