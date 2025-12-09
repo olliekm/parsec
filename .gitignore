@@ -23,3 +23,5 @@ build/
 *.egg-info/
 docs/public/_pagefind/
 docs/out/
+PRODUCTION_READINESS_REPORT.md
+.gitignore

@@ -41,6 +41,7 @@ class CircuitBreaker:
         self._lock = asyncio.Lock()
 
     async def call(self, func: Callable[..., Any], *args, **kwargs) -> Any:
+        # Check state and potentially transition to HALF_OPEN (quick, under lock)
         async with self._lock:
             if self.state == CircuitBreakerState.OPEN:
                 if self._should_attempt_reset():
@@ -50,6 +51,7 @@ class CircuitBreaker:
                     raise CircuitBreakerError(
                         f"Circuit breaker '{self.name}' is OPEN"
                     )
+        # Execute function WITHOUT holding lock (prevents deadlock during long LLM calls)
         try:
             result = await func(*args, **kwargs)
             await self._on_success()

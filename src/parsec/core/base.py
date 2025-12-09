@@ -10,7 +10,7 @@ class ModelProviders(Enum):
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
     LLAMA_CPP = "llama_cpp"
-    OLLAMA = "ollama"  # ADD THI
+    OLLAMA = "ollama"
 
 class OutputFormats(Enum):
     """Output formats supported by the system."""

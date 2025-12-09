@@ -112,8 +112,12 @@ class AnthropicAdapter(BaseLLMAdapter):
         # Anthropic doesn't have response_format parameter
         # Instead, we need to instruct it via the prompt
         if schema:
-            import json
-            schema_str = json.dumps(schema, indent=2)
+            # Convert Pydantic model to JSON schema if needed (same as generate method)
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                schema_dict = schema.model_json_schema()
+            else:
+                schema_dict = schema
+            schema_str = json.dumps(schema_dict, indent=2)
             message_params["messages"][0]["content"] = (
                 f"{prompt}\n\n"
                 f"Please respond with valid JSON matching this schema:\n{schema_str}\n"

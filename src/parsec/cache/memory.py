@@ -3,6 +3,7 @@ from typing import Any, Optional
 from collections import OrderedDict
 from .base import BaseCache
 import time
+import threading
 
 
 class InMemoryCache(BaseCache):
@@ -42,6 +43,7 @@ class InMemoryCache(BaseCache):
         self._hits = 0
         self._misses = 0
         self._default_ttl = default_ttl
+        self._lock = threading.RLock()  # Reentrant lock for thread safety
 
     def get(self, key: str) -> Optional[Any]:
         """
@@ -61,17 +63,18 @@ class InMemoryCache(BaseCache):
             - Moves accessed key to end (most recently used)
             - Deletes expired entries
         """
-        if key in self._cache:
-            entry = self._cache[key]
-            if entry["timestamp"] + entry["ttl"] < time.time():
-                self.delete(key)
-                self._misses += 1
-                return None
-            self._hits += 1
-            self._cache.move_to_end(key)  # Mark as recently used
-            return entry["value"]
-        self._misses += 1
-        return None
+        with self._lock:
+            if key in self._cache:
+                entry = self._cache[key]
+                if entry["timestamp"] + entry["ttl"] < time.time():
+                    self._delete_unsafe(key)
+                    self._misses += 1
+                    return None
+                self._hits += 1
+                self._cache.move_to_end(key)  # Mark as recently used
+                return entry["value"]
+            self._misses += 1
+            return None
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         """
@@ -88,17 +91,26 @@ class InMemoryCache(BaseCache):
             - May evict LRU item if cache is at max_size
             - Updates existing entries if key already exists
         """
-        if len(self._cache) >= self._max_size:
-            self._cache.popitem(last=False)  # Remove least recently used item
+        with self._lock:
+            # Check if key already exists - if so, don't count against max size
+            if key not in self._cache and len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)  # Remove least recently used item
 
-        if ttl is None:
-            ttl = self._default_ttl
+            if ttl is None:
+                ttl = self._default_ttl
 
-        self._cache[key] = {
-            "value": value,
-            "timestamp": time.time(),
-            "ttl": ttl
-        }
+            self._cache[key] = {
+                "value": value,
+                "timestamp": time.time(),
+                "ttl": ttl
+            }
+            # Move to end to mark as recently used
+            self._cache.move_to_end(key)
+
+    def _delete_unsafe(self, key: str) -> None:
+        """Internal delete without lock - must be called with lock held."""
+        if key in self._cache:
+            del self._cache[key]
 
     def delete(self, key: str) -> None:
         """
@@ -110,8 +122,8 @@ class InMemoryCache(BaseCache):
         Note:
             No-op if key doesn't exist (won't raise KeyError)
         """
-        if key in self._cache:
-            del self._cache[key]
+        with self._lock:
+            self._delete_unsafe(key)
 
     def clear(self) -> None:
         """
@@ -120,7 +132,8 @@ class InMemoryCache(BaseCache):
         Note:
             Does not reset hit/miss counters
         """
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
     def exists(self, key: str) -> bool:
         """
@@ -135,7 +148,8 @@ class InMemoryCache(BaseCache):
         Note:
             Does not check TTL expiration or update LRU ordering
         """
-        return key in self._cache
+        with self._lock:
+            return key in self._cache
 
     def get_stats(self) -> dict:
         """
@@ -152,12 +166,13 @@ class InMemoryCache(BaseCache):
             >>> cache.get_stats()
             {'size': 42, 'hits': 100, 'misses': 10, 'hit_rate': '90.91%'}
         """
-        total = self._hits + self._misses
-        hit_rate = (self._hits / total) * 100 if total > 0 else 0.0
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = (self._hits / total) * 100 if total > 0 else 0.0
 
-        return {
-            "size": len(self._cache),
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": f"{hit_rate:.2f}%"
-        }
+            return {
+                "size": len(self._cache),
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": f"{hit_rate:.2f}%"
+            }

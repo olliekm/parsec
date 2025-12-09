@@ -5,6 +5,9 @@ from parsec.logging import get_logger
 class FailoverChain:
     """
     Automatic failover across multiple LLM adapters.
+
+    Tries each adapter in sequence until one succeeds. Compatible with
+    EnforcementEngine caching.
     """
 
     def __init__(self, adapters: List[BaseLLMAdapter]):
@@ -12,6 +15,12 @@ class FailoverChain:
             raise ValueError("At least one adapter must be provided for failover.")
         self.adapters = adapters
         self.logger = get_logger(__name__)
+
+    @property
+    def model(self) -> str:
+        """Return composite model identifier for caching purposes."""
+        model_names = [f"{adapter.provider.value}:{adapter.model}" for adapter in self.adapters]
+        return "failover[" + ",".join(model_names) + "]"
 
     async def generate(self, prompt: str, schema=None, temperature=0.7,
                        max_tokens=None, **kwargs) -> GenerationResponse:
@@ -34,4 +43,7 @@ class FailoverChain:
                 last_exception = e
 
         self.logger.error("All adapters failed to generate a response.")
-        raise last_exception if last_exception else RuntimeError("FailoverChain failed without exceptions.")
+        if last_exception:
+            raise RuntimeError(f"FailoverChain exhausted all {len(self.adapters)} adapters") from last_exception
+        else:
+            raise RuntimeError("FailoverChain failed without exceptions.")

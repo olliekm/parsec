@@ -79,7 +79,8 @@ class EnforcementEngine:
 
         retry_count = 0
         last_validation = None
-        
+        generation = None  # Initialize to prevent UnboundLocalError
+
         for attempt in range(self.max_retries + 1):
             try:
                 if attempt > 0:
@@ -162,7 +163,7 @@ class EnforcementEngine:
 
         # If we exit the loop without returning, all retries were exhausted
         # Return the last failed result
-        if last_validation:
+        if last_validation and generation:
             return EnforcedOutput(
                 data=last_validation.parsed_output,
                 generation=generation,
@@ -171,5 +172,5 @@ class EnforcementEngine:
                 success=False
             )
         else:
-            # Should never reach here, but handle it gracefully
-            raise RuntimeError("Enforcement failed: no validation results available")
+            # No validation results or generation available
+            raise RuntimeError("Enforcement failed: no validation results or generation available")

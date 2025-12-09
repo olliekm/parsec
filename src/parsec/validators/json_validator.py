@@ -41,7 +41,11 @@ class JSONValidator(BaseValidator):
             )
         
         for err in schema_errors:
-            path = "$.".join(str(p) for p in err.path) or "$"
+            # Build proper JSON path: $.field.nested instead of $.$field$.$nested
+            if err.path:
+                path = "$." + ".".join(str(p) for p in err.path)
+            else:
+                path = "$"
             errors.append(ValidationError(
                 path=path,
                 message=err.message,
