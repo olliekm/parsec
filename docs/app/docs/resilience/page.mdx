@@ -1,35 +1,148 @@
 ---
 title: "Resilience"
-description: "Circuit breakers, retry policies, and failover for production-grade LLM applications"
+description: "Circuit breakers, retry policies, rate limiting, and failover for production-grade LLM applications"
 ---
 
 # Resilience
 
-Build robust LLM applications with circuit breakers, retry policies, and failover mechanisms. Handle failures gracefully and maintain service availability.
+Build robust LLM applications with circuit breakers, retry policies, rate limiting, and failover mechanisms. These features help you handle failures gracefully and maintain service availability in production environments.
+
+## Rate Limiting
+
+Prevent API rate limit violations by controlling request and token throughput. Parsec includes a token bucket algorithm that smoothly throttles requests to stay within provider limits.
+
+### Basic Rate Limiting
+
+```python
+from parsec import EnforcementEngine
+from parsec.models.adapters import OpenAIAdapter
+from parsec.validators import PydanticValidator
+from parsec.resilience import RateLimiter
+
+# Create rate limiter with requests and token limits
+rate_limiter = RateLimiter(
+    requests_per_minute=60,      # OpenAI tier 1 limit
+    tokens_per_minute=90_000     # OpenAI tier 1 limit
+)
+
+# Create engine with rate limiting
+adapter = OpenAIAdapter(api_key="your-key", model="gpt-4o-mini")
+validator = PydanticValidator()
+engine = EnforcementEngine(
+    adapter,
+    validator,
+    rate_limiter=rate_limiter
+)
+
+# Requests are automatically throttled
+result = await engine.enforce(prompt, schema)
+```
+
+### Per-Provider Rate Limiting
+
+When using multiple providers, each can have independent rate limits:
+
+```python
+from parsec.resilience import PerProviderRateLimiter, PROVIDER_LIMITS
+
+# Create per-provider rate limiter
+rate_limiter = PerProviderRateLimiter()
+
+# Configure OpenAI with tier 1 limits
+openai_config = PROVIDER_LIMITS['openai']['tier_1']
+rate_limiter.set_provider_limits(
+    'openai',
+    requests_per_minute=openai_config.requests_per_minute,  # 60
+    tokens_per_minute=openai_config.tokens_per_minute       # 90,000
+)
+
+# Configure Anthropic with tier 1 limits
+anthropic_config = PROVIDER_LIMITS['anthropic']['tier_1']
+rate_limiter.set_provider_limits(
+    'anthropic',
+    requests_per_minute=anthropic_config.requests_per_minute,  # 50
+    tokens_per_minute=anthropic_config.tokens_per_minute       # 40,000
+)
+
+# Each provider respects its own limits
+openai_engine = EnforcementEngine(openai_adapter, validator, rate_limiter=rate_limiter)
+anthropic_engine = EnforcementEngine(anthropic_adapter, validator, rate_limiter=rate_limiter)
+```
+
+### Predefined Provider Limits
+
+Parsec includes built-in rate limits for common providers:
+
+```python
+from parsec.resilience import PROVIDER_LIMITS
+
+# OpenAI limits
+PROVIDER_LIMITS['openai']['tier_1']  # 60 req/min, 90K tokens/min
+PROVIDER_LIMITS['openai']['tier_2']  # 500 req/min, 450K tokens/min
+
+# Anthropic limits
+PROVIDER_LIMITS['anthropic']['tier_1']  # 50 req/min, 40K tokens/min
+PROVIDER_LIMITS['anthropic']['tier_2']  # 1000 req/min, 80K tokens/min
+
+# Gemini limits
+PROVIDER_LIMITS['gemini']['free']  # 15 req/min, 32K tokens/min
+PROVIDER_LIMITS['gemini']['paid']  # 1000 req/min, 4M tokens/min
+```
+
+### Multi-Dimensional Rate Limits
+
+You can set limits across multiple time windows:
+
+```python
+rate_limiter = RateLimiter(
+    requests_per_minute=60,
+    tokens_per_minute=90_000,
+    requests_per_day=10_000,      # Daily request cap
+    tokens_per_day=2_000_000      # Daily token cap
+)
+```
+
+### Monitoring Rate Limits
+
+Track usage and capacity in real-time:
+
+```python
+# Get statistics
+stats = rate_limiter.get_stats()
+
+print(f"Total requests: {stats['total_requests']}")
+print(f"Total tokens: {stats['total_tokens']}")
+
+# Check available capacity
+capacity = stats['available_capacity']
+print(f"Request capacity: {capacity['requests_per_minute']['available']}")
+print(f"Token capacity: {capacity['tokens_per_minute']['available']}")
+print(f"Utilization: {capacity['requests_per_minute']['utilization']}")
+```
 
 ## Circuit Breakers
 
-Prevent cascade failures by temporarily blocking requests to failing services.
+Prevent cascade failures by temporarily blocking requests to failing services. Circuit breakers detect when a service is unhealthy and stop sending requests until it recovers.
 
 ### Basic Usage
 
 ```python
-from parsec.models.adapters import OpenAIAdapter
-from parsec.validators import PydanticValidator
 from parsec import EnforcementEngine
+from parsec.resilience import CircuitBreakerConfig
 
-# Create adapter and engine
-adapter = OpenAIAdapter(api_key="your-key", model="gpt-4o-mini")
-validator = PydanticValidator()
-
-# Enable circuit breaker
+# Enable circuit breaker on the engine
 engine = EnforcementEngine(
     adapter,
     validator,
-    use_circuit_breaker=True
+    use_circuit_breaker=True,
+    circuit_breaker_config=CircuitBreakerConfig(
+        failure_threshold=5,
+        success_threshold=2,
+        timeout=60.0
+    )
 )
 
-# Use normally - circuit breaker protects automatically
+# Circuit breaker protects automatically
 result = await engine.enforce(prompt, schema)
 ```
 
@@ -40,30 +153,32 @@ from parsec.resilience import CircuitBreaker, CircuitBreakerState, CircuitBreake
 
 # Configure circuit breaker
 config = CircuitBreakerConfig(
-    failure_threshold=5,        # Open after 5 failures
-    success_threshold=2,        # Close after 2 successes
-    timeout_seconds=60.0,       # Stay open for 60 seconds
-    half_open_max_calls=3       # Allow 3 test calls when half-open
+    failure_threshold=5,    # Open after 5 failures
+    success_threshold=2,    # Close after 2 successes in half-open
+    timeout=60.0           # Wait 60 seconds before trying again
 )
 
 circuit = CircuitBreaker(name="openai_circuit", config=config)
 
-# Use with async context
+# Use with function calls
 async def call_llm():
-    async with circuit:
-        result = await adapter.generate(prompt)
-        return result
+    return await adapter.generate(prompt, schema)
 
-# Check state
-if circuit.state == CircuitBreakerState.OPEN:
-    print("Circuit is open - service unavailable")
+result = await circuit.call(call_llm)
+
+# Check circuit state
+state = circuit.get_state()
+print(f"Circuit state: {state['state']}")
+print(f"Failure count: {state['failure_count']}")
 ```
 
 ### Circuit States
 
-- **CLOSED**: Normal operation, all requests pass through
-- **OPEN**: Too many failures, requests are blocked
-- **HALF_OPEN**: Testing if service recovered
+The circuit breaker transitions through three states:
+
+- **CLOSED**: Normal operation - all requests pass through
+- **OPEN**: Too many failures detected - requests are blocked
+- **HALF_OPEN**: Testing recovery - limited requests allowed
 
 ```
 CLOSED --[5 failures]--> OPEN
@@ -72,196 +187,243 @@ HALF_OPEN --[2 successes]--> CLOSED
 HALF_OPEN --[any failure]--> OPEN
 ```
 
+### Resetting Circuit Breakers
+
+Manually reset a circuit breaker when needed:
+
+```python
+# Reset the circuit breaker
+await circuit.reset()
+
+# Check state after reset
+print(circuit.get_state()['state'])  # CLOSED
+```
+
 ## Retry Policies
 
-Automatically retry failed operations with configurable strategies.
+Automatically retry failed operations with exponential backoff. The enforcement engine has built-in retry logic with configurable policies.
 
 ### Exponential Backoff
 
 ```python
 from parsec.resilience import ExponentialBackoff
 
-retry = ExponentialBackoff(
-    max_retries=3,
-    base_delay_ms=1000,      # Start with 1 second
-    max_delay_ms=10000,      # Cap at 10 seconds
-    multiplier=2.0,          # Double each time
-    jitter=True              # Add randomness
+# Create backoff strategy
+backoff = ExponentialBackoff(
+    base=1.0,          # Start with 1 second
+    max_delay=30.0,    # Cap at 30 seconds
+    jitter=True        # Add randomness to prevent thundering herd
 )
 
-# Retry delays: 1s, 2s, 4s (with jitter: ±20%)
+# Calculate delay for attempt
+delay = backoff.calculate(attempt=0)  # ~1.0 seconds
+delay = backoff.calculate(attempt=1)  # ~2.0 seconds
+delay = backoff.calculate(attempt=2)  # ~4.0 seconds
+
+# Use with async sleep
+await backoff.sleep(attempt)
 ```
 
 ### Built-in Retry Policies
 
-```python
-from parsec.resilience import OperationType, get_retry_policy
+The enforcement engine uses retry policies for different operation types:
 
-# Get default policy for operation type
-generation_policy = get_retry_policy(OperationType.GENERATION)
-validation_policy = get_retry_policy(OperationType.VALIDATION)
-api_policy = get_retry_policy(OperationType.API_CALL)
+```python
+from parsec.resilience import RetryPolicy, OperationType, DEFAULT_POLICIES
+
+# Generation operations (LLM API calls)
+gen_policy = DEFAULT_POLICIES[OperationType.GENERATION]
+# - max_attempts: 3
+# - base_delay: 1.0s
+# - max_delay: 30.0s
+# - timeout: 120.0s
+# - retryable_exceptions: (TimeoutError, ConnectionError, OSError)
+
+# Validation operations
+val_policy = DEFAULT_POLICIES[OperationType.VALIDATION]
+# - max_attempts: 1 (no retry)
+# - timeout: 5.0s
 ```
 
 ### Custom Retry Policy
 
+Create your own retry policy for specific needs:
+
 ```python
-from parsec.resilience import RetryPolicy, OperationType
-import asyncio
+from parsec.resilience import RetryPolicy
 
-class CustomRetry(RetryPolicy):
-    def __init__(self):
-        super().__init__(
-            operation_type=OperationType.GENERATION,
-            max_retries=5,
-            base_delay_ms=2000
-        )
+custom_policy = RetryPolicy(
+    max_attempts=5,
+    base_delay=2.0,
+    max_delay=60.0,
+    retryable_exceptions=(TimeoutError, ConnectionError),
+    timeout=180.0
+)
 
-    def should_retry(self, error: Exception, attempt: int) -> bool:
-        # Only retry rate limit errors
-        return "rate_limit" in str(error).lower() and attempt < self.max_retries
-
-    async def wait(self, attempt: int) -> None:
-        # Fibonacci backoff
-        delay = self._fibonacci(attempt) * 1000
-        await asyncio.sleep(delay / 1000)
+# Use with engine
+engine = EnforcementEngine(
+    adapter,
+    validator,
+    retry_policy=custom_policy
+)
 ```
 
 ## Failover
 
-Automatically switch to backup providers when primary fails.
+Automatically switch between providers when the primary fails. Failover chains try adapters in sequence until one succeeds.
 
 ### Basic Failover
 
 ```python
 from parsec.resilience import FailoverChain
 from parsec.models.adapters import OpenAIAdapter, AnthropicAdapter
-from parsec.validators import PydanticValidator
 from parsec import EnforcementEngine
 
-# Create adapters
+# Create adapters for different providers
 openai = OpenAIAdapter(api_key="key1", model="gpt-4o-mini")
-anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-sonnet-20241022")
+anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-haiku-20241022")
 
-# Create failover chain
-failover = FailoverChain(
-    engines=[openai, anthropic],
-    max_attempts_per_engine=2
-)
+# Create failover chain - tries adapters in order
+failover = FailoverChain([openai, anthropic])
 
-# Use failover adapter
-validator = PydanticValidator()
+# Use failover as the adapter
 engine = EnforcementEngine(failover, validator)
 
-# Automatically tries openai first, falls back to anthropic if it fails
+# Automatically tries OpenAI first, falls back to Anthropic on failure
 result = await engine.enforce(prompt, schema)
 ```
 
-### Failover with Circuit Breakers
+### Multi-Provider Failover
 
 ```python
-from parsec.resilience import FailoverChain, CircuitBreakerConfig
+from parsec.resilience import FailoverChain
 from parsec.models.adapters import OpenAIAdapter, AnthropicAdapter, GeminiAdapter
 
-# Create adapters
+# Create multiple adapters
 openai = OpenAIAdapter(api_key="key1", model="gpt-4o-mini")
-anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-sonnet-20241022")
-gemini = GeminiAdapter(api_key="key3", model="gemini-pro")
+anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-haiku-20241022")
+gemini = GeminiAdapter(api_key="key3", model="gemini-1.5-flash")
 
-# Configure circuit breakers
-circuit_config = CircuitBreakerConfig(
-    failure_threshold=5,
-    success_threshold=2,
-    timeout_seconds=60.0
-)
+# Create failover chain with all providers
+failover = FailoverChain([openai, anthropic, gemini])
 
-# Create failover with circuit protection
-failover = FailoverChain(
-    engines=[openai, anthropic, gemini],
-    max_attempts_per_engine=2,
-    use_circuit_breakers=True,
-    circuit_breaker_config=circuit_config
-)
-
-# Use normally
-validator = PydanticValidator()
+# Engine will try each adapter until one succeeds
 engine = EnforcementEngine(failover, validator)
 result = await engine.enforce(prompt, schema)
 ```
 
-## Complete Example
+### Failover with Caching
 
-Production-ready setup with all resilience features:
+The failover chain generates a composite model identifier for caching:
 
 ```python
-from parsec.resilience import FailoverChain, CircuitBreakerConfig, ExponentialBackoff
+from parsec.cache import InMemoryCache
+
+# Cache key includes all adapters in the chain
+cache = InMemoryCache()
+engine = EnforcementEngine(failover, validator, cache=cache)
+
+# Model identifier: "failover[openai:gpt-4o-mini,anthropic:claude-3-5-haiku-20241022]"
+print(failover.model)
+```
+
+## Complete Production Example
+
+Combine all resilience features for a production-ready setup:
+
+```python
+from parsec import EnforcementEngine
+from parsec.resilience import (
+    FailoverChain,
+    CircuitBreakerConfig,
+    PerProviderRateLimiter,
+    PROVIDER_LIMITS,
+    RetryPolicy
+)
 from parsec.models.adapters import OpenAIAdapter, AnthropicAdapter
 from parsec.validators import PydanticValidator
-from parsec import EnforcementEngine
+from parsec.cache import InMemoryCache
 from pydantic import BaseModel
 
 # Define schema
-class Analysis(BaseModel):
+class SentimentAnalysis(BaseModel):
     sentiment: str
     confidence: float
     summary: str
 
 # Create adapters
 openai = OpenAIAdapter(api_key="key1", model="gpt-4o-mini")
-anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-sonnet-20241022")
+anthropic = AnthropicAdapter(api_key="key2", model="claude-3-5-haiku-20241022")
 
-# Configure circuit breakers
+# Set up per-provider rate limiting
+rate_limiter = PerProviderRateLimiter()
+rate_limiter.set_provider_limits(
+    'openai',
+    **PROVIDER_LIMITS['openai']['tier_1'].__dict__
+)
+rate_limiter.set_provider_limits(
+    'anthropic',
+    **PROVIDER_LIMITS['anthropic']['tier_1'].__dict__
+)
+
+# Create failover chain
+failover = FailoverChain([openai, anthropic])
+
+# Configure circuit breaker
 circuit_config = CircuitBreakerConfig(
     failure_threshold=5,
     success_threshold=2,
-    timeout_seconds=60.0
-)
-
-# Create failover chain with circuit breakers
-failover = FailoverChain(
-    engines=[openai, anthropic],
-    max_attempts_per_engine=2,
-    use_circuit_breakers=True,
-    circuit_breaker_config=circuit_config
+    timeout=60.0
 )
 
 # Custom retry policy
-retry_policy = ExponentialBackoff(
-    max_retries=3,
-    base_delay_ms=1000,
-    max_delay_ms=10000,
-    jitter=True
+retry_policy = RetryPolicy(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=30.0
 )
 
 # Create engine with all resilience features
+cache = InMemoryCache(max_size=100, default_ttl=3600)
 validator = PydanticValidator()
+
 engine = EnforcementEngine(
     adapter=failover,
     validator=validator,
-    retry_policy=retry_policy
+    cache=cache,
+    rate_limiter=rate_limiter,
+    retry_policy=retry_policy,
+    use_circuit_breaker=True,
+    circuit_breaker_config=circuit_config
 )
 
-# Use with full resilience
+# Use with full production resilience
 result = await engine.enforce(
-    "Analyze: Great product, highly recommend!",
-    Analysis
+    "Analyze sentiment: Great product, highly recommend!",
+    SentimentAnalysis
 )
 
 print(result.data)
-# Analysis(sentiment='positive', confidence=0.95, summary='...')
+# SentimentAnalysis(sentiment='positive', confidence=0.95, summary='...')
 ```
 
 ## Best Practices
 
+### Rate Limiting
+
+- **Set realistic limits**: Match your API tier limits exactly
+- **Monitor usage**: Track stats to avoid hitting limits
+- **Handle bursts**: Token bucket allows short bursts while maintaining long-term limits
+- **Per-provider limits**: Use `PerProviderRateLimiter` when working with multiple providers
+
 ### Circuit Breaker Configuration
 
 ```python
-# Production settings
+# Production-ready settings
 config = CircuitBreakerConfig(
-    failure_threshold=5,         # 5-10 failures typical
-    success_threshold=2,         # 2-3 successes for recovery
-    timeout_seconds=60.0,        # 30-120 seconds typical
-    half_open_max_calls=3        # 3-5 test calls
+    failure_threshold=5,    # 5-10 failures is typical
+    success_threshold=2,    # 2-3 successes for recovery
+    timeout=60.0           # 30-120 seconds typical
 )
 ```
 
@@ -269,41 +431,93 @@ config = CircuitBreakerConfig(
 
 ```python
 # Recommended for LLM calls
-retry = ExponentialBackoff(
-    max_retries=3,               # 3-5 retries
-    base_delay_ms=1000,          # Start with 1 second
-    max_delay_ms=30000,          # Cap at 30 seconds
-    jitter=True                  # Always enable jitter
+retry = RetryPolicy(
+    max_attempts=3,        # 3-5 retries typical
+    base_delay=1.0,        # Start with 1 second
+    max_delay=30.0,        # Cap at 30 seconds
+    timeout=120.0          # 2 minutes for LLM calls
 )
 ```
 
 ### Failover Strategy
 
-- Order engines by speed/cost (fastest/cheapest first)
-- Use circuit breakers per provider
-- Monitor failover rate to detect issues
-- Consider cost implications of failover
+- **Order by speed/cost**: Put fastest and cheapest providers first
+- **Monitor failover rate**: High failover indicates primary issues
+- **Consider cost**: Backup providers may have different pricing
+- **Use consistent schemas**: Ensure all providers support your schema format
 
-## Error Classification
+## Error Handling
+
+### Retryable vs Non-Retryable Errors
+
+The default retry policy distinguishes between errors that should and shouldn't be retried:
 
 ```python
-# Retriable errors
-RETRIABLE_ERRORS = (
-    "RateLimitError",
-    "TimeoutError",
-    "ConnectionError",
-    "ServiceUnavailableError"
+# Retryable errors (temporary issues)
+RETRYABLE_ERRORS = (
+    TimeoutError,
+    ConnectionError,
+    OSError
 )
 
-# Non-retriable errors
-NON_RETRIABLE_ERRORS = (
-    "ValidationError",
-    "AuthenticationError",
-    "InvalidRequestError"
+# Non-retryable errors (permanent issues)
+# - ValueError
+# - AuthenticationError
+# - InvalidRequestError
+```
+
+### Custom Error Handling
+
+```python
+# Define custom retryable exceptions
+custom_policy = RetryPolicy(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=30.0,
+    retryable_exceptions=(
+        TimeoutError,
+        ConnectionError,
+        RuntimeError  # Add custom exception
+    )
 )
 ```
 
 ## API Reference
+
+### RateLimiter
+
+```python
+class RateLimiter:
+    def __init__(
+        self,
+        requests_per_minute: Optional[int] = None,
+        tokens_per_minute: Optional[int] = None,
+        requests_per_day: Optional[int] = None,
+        tokens_per_day: Optional[int] = None
+    )
+
+    async def acquire(self, estimated_tokens: int = 0) -> None
+    def get_stats(self) -> dict
+```
+
+### PerProviderRateLimiter
+
+```python
+class PerProviderRateLimiter:
+    def __init__(self)
+
+    def set_provider_limits(
+        self,
+        provider: str,
+        requests_per_minute: Optional[int] = None,
+        tokens_per_minute: Optional[int] = None,
+        requests_per_day: Optional[int] = None,
+        tokens_per_day: Optional[int] = None
+    ) -> None
+
+    async def acquire(self, provider: str, estimated_tokens: int = 0) -> None
+    def get_stats(self) -> dict
+```
 
 ### CircuitBreaker
 
@@ -315,11 +529,9 @@ class CircuitBreaker:
         config: Optional[CircuitBreakerConfig] = None
     )
 
-    async def __aenter__(self)
-    async def __aexit__(self, exc_type, exc_val, exc_tb)
-
-    @property
-    def state(self) -> CircuitBreakerState
+    async def call(self, func: Callable, *args, **kwargs) -> Any
+    async def reset(self) -> None
+    def get_state(self) -> dict
 ```
 
 ### CircuitBreakerConfig
@@ -329,38 +541,32 @@ class CircuitBreaker:
 class CircuitBreakerConfig:
     failure_threshold: int = 5
     success_threshold: int = 2
-    timeout_seconds: float = 60.0
-    half_open_max_calls: int = 3
+    timeout: float = 60.0
 ```
 
 ### ExponentialBackoff
 
 ```python
-class ExponentialBackoff(RetryPolicy):
+class ExponentialBackoff:
     def __init__(
         self,
-        max_retries: int = 3,
-        base_delay_ms: float = 1000,
-        max_delay_ms: float = 10000,
-        multiplier: float = 2.0,
+        base: float = 1.0,
+        max_delay: float = 60.0,
         jitter: bool = True
     )
 
-    def should_retry(self, error: Exception, attempt: int) -> bool
-    async def wait(self, attempt: int) -> None
+    def calculate(self, attempt: int) -> float
+    async def sleep(self, attempt: int) -> None
 ```
 
 ### FailoverChain
 
 ```python
 class FailoverChain:
-    def __init__(
-        self,
-        engines: List[BaseLLMAdapter],
-        max_attempts_per_engine: int = 2,
-        use_circuit_breakers: bool = False,
-        circuit_breaker_config: Optional[CircuitBreakerConfig] = None
-    )
+    def __init__(self, adapters: List[BaseLLMAdapter])
+
+    @property
+    def model(self) -> str
 
     async def generate(
         self,
@@ -368,4 +574,18 @@ class FailoverChain:
         schema: Optional[dict] = None,
         **kwargs
     ) -> GenerationResponse
+```
+
+### RetryPolicy
+
+```python
+@dataclass
+class RetryPolicy:
+    max_attempts: int
+    base_delay: float
+    max_delay: float
+    retryable_exceptions: tuple = (Exception,)
+    timeout: Optional[float] = None
+
+    def is_retryable(self, exception: Exception) -> bool
 ```
