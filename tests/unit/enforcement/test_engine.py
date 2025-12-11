@@ -365,7 +365,7 @@ class TestEnforcementEngine:
 
         # First call raises retryable exception, second succeeds
         adapter.responses = [
-            asyncio.TimeoutError("Timeout"),
+            TimeoutError("Timeout"),  # Use TimeoutError not asyncio.TimeoutError
             GenerationResponse(
                 output='{"name": "test", "age": 30}',
                 provider="test",
@@ -410,15 +410,15 @@ class TestEnforcementEngine:
 
         # All attempts raise retryable exceptions
         adapter.responses = [
-            asyncio.TimeoutError("Timeout 1"),
-            asyncio.TimeoutError("Timeout 2"),
-            asyncio.TimeoutError("Timeout 3"),
-            asyncio.TimeoutError("Timeout 4")
+            TimeoutError("Timeout 1"),
+            TimeoutError("Timeout 2"),
+            TimeoutError("Timeout 3"),
+            TimeoutError("Timeout 4")
         ]
 
         engine = EnforcementEngine(adapter, validator, max_retries=3)
 
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await engine.enforce(
                 prompt="Test prompt",
                 schema={"type": "object"}
@@ -456,15 +456,15 @@ class TestEnforcementEngine:
 
         # All attempts raise exceptions, no validation happens
         adapter.responses = [
-            asyncio.TimeoutError("Timeout"),
-            asyncio.TimeoutError("Timeout"),
-            asyncio.TimeoutError("Timeout"),
-            asyncio.TimeoutError("Timeout")
+            TimeoutError("Timeout"),
+            TimeoutError("Timeout"),
+            TimeoutError("Timeout"),
+            TimeoutError("Timeout")
         ]
 
         engine = EnforcementEngine(adapter, validator, max_retries=3)
 
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await engine.enforce(
                 prompt="Test prompt",
                 schema={"type": "object"}
