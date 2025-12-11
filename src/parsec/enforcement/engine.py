@@ -10,6 +10,7 @@ from parsec.resilience.retry import RetryPolicy, OperationType, DEFAULT_POLICIES
 from parsec.resilience.backoff import ExponentialBackoff
 from parsec.resilience.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from parsec.resilience.failover import FailoverChain
+from parsec.resilience.rate_limiter import RateLimiter, PerProviderRateLimiter
 
 if TYPE_CHECKING:
     from parsec.training.collector import DatasetCollector
@@ -33,7 +34,8 @@ class EnforcementEngine:
         cache: Optional[BaseCache] = None,
         retry_policy: Optional[RetryPolicy] = None,
         use_circuit_breaker: bool = False,
-        circuit_breaker_config: Optional[CircuitBreakerConfig] = None
+        circuit_breaker_config: Optional[CircuitBreakerConfig] = None,
+        rate_limiter: Optional[Union[RateLimiter, PerProviderRateLimiter]] = None
     ):
         self.adapter = adapter
         self.validator = validator
@@ -41,6 +43,7 @@ class EnforcementEngine:
         self.collector = collector
         self.cache = cache
         self.retry_policy = retry_policy or DEFAULT_POLICIES[OperationType.GENERATION]
+        self.rate_limiter = rate_limiter
 
         if use_circuit_breaker:
             provider = getattr(self.adapter, 'provider', 'adapter').value if hasattr(self.adapter, 'provider') else 'failover'
@@ -85,6 +88,22 @@ class EnforcementEngine:
             try:
                 if attempt > 0:
                     await backoff.sleep(attempt)
+
+                # Apply rate limiting before making API call
+                if self.rate_limiter:
+                    # Estimate tokens for rate limiting (rough estimate based on prompt length)
+                    estimated_tokens = len(prompt.split()) * 1.3  # ~1.3 tokens per word
+                    estimated_tokens += kwargs.get('max_tokens', 1000)  # Add expected output
+
+                    # For per-provider rate limiter, get provider name
+                    if isinstance(self.rate_limiter, PerProviderRateLimiter):
+                        provider = getattr(self.adapter, 'provider', None)
+                        if provider:
+                            await self.rate_limiter.acquire(provider.value, int(estimated_tokens))
+                        else:
+                            await self.rate_limiter.acquire('unknown', int(estimated_tokens))
+                    else:
+                        await self.rate_limiter.acquire(int(estimated_tokens))
 
                 if self.circuit_breaker:
                     async def _generate():

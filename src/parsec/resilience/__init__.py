@@ -4,6 +4,13 @@ from parsec.resilience.circuit_breaker import CircuitBreaker, CircuitBreakerStat
 from parsec.resilience.retry import RetryPolicy, OperationType, get_retry_policy
 from parsec.resilience.backoff import ExponentialBackoff
 from parsec.resilience.failover import FailoverChain
+from parsec.resilience.rate_limiter import (
+    RateLimiter,
+    PerProviderRateLimiter,
+    RateLimitConfig,
+    TokenBucket,
+    PROVIDER_LIMITS
+)
 
 __all__ = [
     "CircuitBreaker",
@@ -14,4 +21,9 @@ __all__ = [
     "get_retry_policy",
     "ExponentialBackoff",
     "FailoverChain",
+    "RateLimiter",
+    "PerProviderRateLimiter",
+    "RateLimitConfig",
+    "TokenBucket",
+    "PROVIDER_LIMITS",
 ]

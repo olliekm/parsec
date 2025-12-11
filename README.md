@@ -30,6 +30,7 @@ This repository contains:
 - **Multiple validators**: JSON Schema, Pydantic models
 - **Automatic repair**: Schema-based heuristics fix common formatting issues
 - **Retry loop**: Progressive feedback to model for iterative repair
+- **Rate limiting**: Built-in token bucket algorithm prevents API rate limit violations
 - **Dataset collection**: Capture and export training data (JSONL, JSON, CSV)
 
 ### Prompt Management
@@ -168,6 +169,42 @@ result = await engine.enforce(
 print(result.data)  # {"name": "John Doe", "age": 30, "email": "john@example.com"}
 ```
 
+### With Rate Limiting
+
+```python
+from parsec.resilience import RateLimiter, PerProviderRateLimiter, PROVIDER_LIMITS
+
+# Basic rate limiting - prevent exceeding API limits
+rate_limiter = RateLimiter(
+    requests_per_minute=60,
+    tokens_per_minute=90_000
+)
+
+engine = EnforcementEngine(adapter, validator, rate_limiter=rate_limiter)
+
+# Make requests - automatically throttled to stay within limits
+result = await engine.enforce(prompt, schema)
+
+# Per-provider rate limiting with predefined limits
+rate_limiter = PerProviderRateLimiter()
+
+# Configure OpenAI with tier 1 limits (60 req/min, 90K tokens/min)
+openai_config = PROVIDER_LIMITS['openai']['tier_1']
+rate_limiter.set_provider_limits(
+    'openai',
+    requests_per_minute=openai_config.requests_per_minute,
+    tokens_per_minute=openai_config.tokens_per_minute
+)
+
+# Each provider respects its own limits independently
+openai_engine = EnforcementEngine(openai_adapter, validator, rate_limiter=rate_limiter)
+anthropic_engine = EnforcementEngine(anthropic_adapter, validator, rate_limiter=rate_limiter)
+
+# Get statistics
+stats = rate_limiter.get_stats()
+print(stats)  # {'openai': {'total_requests': 5, 'total_tokens': 2500, ...}}
+```
+
 ## Development Setup
 
 Requirements: Python 3.9+
@@ -203,6 +240,7 @@ The example demonstrates using `OpenAIAdapter`, `JSONValidator` and
 - `src/parsec/enforcement/` — Enforcement and orchestration engine
 - `src/parsec/prompts/` — Prompt template system with versioning
 - `src/parsec/cache/` — Caching implementations (InMemoryCache)
+- `src/parsec/resilience/` — Rate limiting, circuit breakers, retries, failover
 - `src/parsec/training/` — Dataset collection for fine-tuning
 - `src/parsec/utils/` — Utility functions (partial JSON parsing)
 - `examples/` — Working examples with real API calls
@@ -217,11 +255,12 @@ Check out the `examples/` directory for complete working examples:
 - `prompt_persistence_example.py` - Save/load templates from YAML
 - `template_manager_example.py` - TemplateManager integration
 - `template_manager_live_example.py` - Live demo with real API calls
+- `rate_limiting_demo.py` - Rate limiting with token buckets
 - `streaming_example.py` - Streaming support (experimental)
 
 Run any example:
 ```bash
-python3 examples/template_manager_live_example.py
+python3 examples/rate_limiting_demo.py
 ```
 
 ## Testing
@@ -314,8 +353,8 @@ result = await engine.enforce(prompt, schema)
 - [x] LRU caching with TTL
 - [x] Prompt template system with versioning
 - [x] Dataset collection for training
+- [x] Rate limiting with token bucket algorithm
 - [ ] Streaming support for real-time output
-- [ ] Batch processing with rate limiting
 - [ ] Cost tracking and analytics
 - [ ] A/B testing for prompt variants
 - [ ] Output post-processing pipeline
