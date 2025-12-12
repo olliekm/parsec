@@ -1,1 +1,631 @@
+---
+title: "Validators"
+description: "JSON Schema and Pydantic validation for structured LLM outputs with automatic repair capabilities"
+---
+
 # Validators
+
+Validators ensure LLM outputs conform to your expected structure. Parsec provides two validators: `JSONValidator` for JSON Schema validation and `PydanticValidator` for Pydantic models.
+
+## Overview
+
+Validators perform three main tasks:
+
+1. **Parse** - Convert raw LLM output string to structured data
+2. **Validate** - Check the output matches your schema
+3. **Repair** - Fix common issues like missing quotes or braces
+
+Both validators support automatic retry with detailed feedback when validation fails.
+
+## Quick Comparison
+
+| Feature | JSONValidator | PydanticValidator |
+|---------|--------------|-------------------|
+| Schema Type | JSON Schema (Draft 7) | Pydantic BaseModel |
+| Validation | Schema compliance | Type checking + constraints |
+| Field Constraints | Limited (JSON Schema) | Rich (Pydantic Field) |
+| Auto Repair | ✅ JSON syntax fixes | ✅ JSON syntax fixes |
+| Type Safety | Runtime only | Runtime + IDE support |
+| Best For | Simple schemas, interop | Complex models, type hints |
+
+## JSONValidator
+
+Use JSON Schema for validation. Good for simple schemas or when you need JSON Schema compatibility.
+
+### Basic Usage
+
+```python
+from parsec.validators import JSONValidator
+from parsec import EnforcementEngine
+
+# Create validator
+validator = JSONValidator()
+
+# Define JSON schema
+schema = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "integer"},
+        "email": {"type": "string"}
+    },
+    "required": ["name", "email"]
+}
+
+# Use with enforcement engine
+engine = EnforcementEngine(adapter, validator)
+result = await engine.enforce(
+    "Extract: John Doe, 30 years old, john@example.com",
+    schema
+)
+
+print(result.data)
+# {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+```
+
+### JSON Schema Features
+
+The validator supports JSON Schema Draft 7 features:
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        # String constraints
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+        },
+
+        # Number constraints
+        "age": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 150
+        },
+
+        # Pattern matching
+        "email": {
+            "type": "string",
+            "pattern": "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
+        },
+
+        # Enums
+        "status": {
+            "type": "string",
+            "enum": ["active", "inactive", "pending"]
+        },
+
+        # Arrays
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "maxItems": 10
+        },
+
+        # Nested objects
+        "address": {
+            "type": "object",
+            "properties": {
+                "street": {"type": "string"},
+                "city": {"type": "string"},
+                "zipcode": {"type": "string"}
+            },
+            "required": ["street", "city"]
+        }
+    },
+    "required": ["name", "email", "status"]
+}
+```
+
+### Optional Fields
+
+Fields not in the `required` array are optional:
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "integer"},      # Optional
+        "email": {"type": "string"}
+    },
+    "required": ["name", "email"]  # age is optional
+}
+
+# Valid without age
+result = await engine.enforce("John Doe at john@example.com", schema)
+# {'name': 'John Doe', 'email': 'john@example.com'}
+```
+
+## PydanticValidator
+
+Use Pydantic models for validation. Best for complex schemas with type hints and rich constraints.
+
+### Basic Usage
+
+```python
+from parsec.validators import PydanticValidator
+from pydantic import BaseModel, Field
+
+# Define Pydantic model
+class Person(BaseModel):
+    name: str
+    age: int
+    email: str
+
+# Create validator
+validator = PydanticValidator()
+engine = EnforcementEngine(adapter, validator)
+
+# Generate structured output
+result = await engine.enforce(
+    "Extract: John Doe, 30 years old, john@example.com",
+    Person
+)
+
+print(result.data)
+# {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+
+# Access as dictionary
+print(result.data['name'])  # 'John Doe'
+```
+
+### Field Constraints
+
+Pydantic provides rich field-level validation:
+
+```python
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional
+
+class User(BaseModel):
+    # String constraints
+    name: str = Field(min_length=1, max_length=100)
+
+    # Numeric constraints
+    age: int = Field(ge=0, le=150)  # ge = greater than or equal
+
+    # Email validation
+    email: EmailStr  # Built-in email validation
+
+    # Pattern matching
+    username: str = Field(pattern=r'^[a-zA-Z0-9_]+$')
+
+    # Optional fields
+    phone: Optional[str] = None
+
+    # Default values
+    status: str = Field(default="active")
+
+    # Lists with constraints
+    tags: List[str] = Field(min_length=1, max_length=10)
+
+    # Nested models
+    address: 'Address'
+
+class Address(BaseModel):
+    street: str
+    city: str
+    zipcode: str = Field(pattern=r'^\d{5}$')
+```
+
+### Optional Fields
+
+Use `Optional` for optional fields:
+
+```python
+from typing import Optional
+
+class Person(BaseModel):
+    name: str
+    age: Optional[int] = None  # Optional with default None
+    email: str
+
+# Valid without age
+result = await engine.enforce("John Doe at john@example.com", Person)
+# {'name': 'John Doe', 'age': None, 'email': 'john@example.com'}
+```
+
+### Nested Models
+
+Pydantic handles nested structures naturally:
+
+```python
+class Address(BaseModel):
+    street: str
+    city: str
+    zipcode: str
+
+class Company(BaseModel):
+    name: str
+    headquarters: Address
+
+class Person(BaseModel):
+    name: str
+    age: int
+    address: Address
+    employer: Optional[Company] = None
+
+# LLM generates nested JSON automatically
+result = await engine.enforce(prompt, Person)
+print(result.data['address']['city'])
+```
+
+### Descriptions for Better LLM Guidance
+
+Add descriptions to guide the LLM:
+
+```python
+class SentimentAnalysis(BaseModel):
+    sentiment: str = Field(
+        description="The overall sentiment: positive, negative, or neutral"
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Confidence score between 0 and 1"
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why this sentiment was assigned"
+    )
+    key_phrases: List[str] = Field(
+        description="Important phrases that influenced the sentiment"
+    )
+
+# Descriptions help the LLM understand what to generate
+result = await engine.enforce("Review: Amazing product!", SentimentAnalysis)
+```
+
+## Validation Results
+
+Both validators return `ValidationResult` objects:
+
+```python
+class ValidationResult:
+    status: ValidationStatus         # VALID or INVALID
+    parsed_output: Optional[Any]     # Parsed data if valid
+    errors: List[ValidationError]    # Validation errors if invalid
+    raw_output: str                 # Original LLM output
+    repair_attempted: bool          # Whether repair was tried
+    repair_successful: bool         # Whether repair succeeded
+```
+
+### Accessing Results
+
+```python
+# After enforcement
+result = await engine.enforce(prompt, schema)
+
+# Check if valid
+if result.validation.status == ValidationStatus.VALID:
+    print("Success!")
+    print(result.data)
+else:
+    print("Failed validation")
+    for error in result.validation.errors:
+        print(f"  {error.path}: {error.message}")
+```
+
+### Validation Errors
+
+Detailed error information for debugging:
+
+```python
+class ValidationError:
+    path: str        # Field path (e.g., "address.zipcode")
+    message: str     # Error description
+    expected: Any    # Expected type/value
+    actual: Any      # Actual value received
+    severity: str    # "error" or "warning"
+```
+
+Example error:
+
+```python
+ValidationError(
+    path="age",
+    message="Input should be a valid integer",
+    expected="int",
+    actual="thirty",
+    severity="error"
+)
+```
+
+## Automatic Repair
+
+Both validators attempt to fix common JSON issues automatically:
+
+### What Gets Repaired
+
+- Missing closing braces or brackets
+- Missing quotes around keys or values
+- Trailing commas
+- Unescaped quotes
+- Common JSON syntax errors
+
+### Example
+
+```python
+# LLM generates invalid JSON
+invalid_output = '{"name": "John Doe", "age": 30'  # Missing }
+
+# Validator attempts repair
+result = validator.validate_and_repair(invalid_output, schema)
+
+if result.repair_successful:
+    print("Repaired successfully!")
+    print(result.parsed_output)
+    # {'name': 'John Doe', 'age': 30}
+```
+
+### Manual Repair
+
+You can also call repair directly:
+
+```python
+invalid_json = '{"name": "John", "age": 30'
+repaired = validator.repair(invalid_json, [])
+print(repaired)
+# '{"name": "John", "age": 30}'
+```
+
+## Direct Validation (Without Engine)
+
+Use validators directly without the enforcement engine:
+
+### JSONValidator
+
+```python
+from parsec.validators import JSONValidator
+
+validator = JSONValidator()
+
+# Validate
+result = validator.validate(
+    '{"name": "John", "age": 30}',
+    {"type": "object", "properties": {"name": {"type": "string"}}}
+)
+
+if result.status == ValidationStatus.VALID:
+    print(result.parsed_output)
+else:
+    for error in result.errors:
+        print(f"{error.path}: {error.message}")
+```
+
+### PydanticValidator
+
+```python
+from parsec.validators import PydanticValidator
+
+validator = PydanticValidator()
+
+# Validate
+result = validator.validate(
+    '{"name": "John", "age": 30}',
+    Person
+)
+
+if result.status == ValidationStatus.VALID:
+    print(result.parsed_output)
+```
+
+### Validate and Repair
+
+Combine validation and repair in one call:
+
+```python
+# Attempts repair if initial validation fails
+result = validator.validate_and_repair(output, schema)
+
+if result.status == ValidationStatus.VALID:
+    if result.repair_attempted:
+        print("Repaired and validated successfully")
+    else:
+        print("Valid without repair")
+    print(result.parsed_output)
+else:
+    print("Invalid even after repair attempt")
+    print(result.errors)
+```
+
+## Choosing a Validator
+
+### Use JSONValidator When:
+
+- You need JSON Schema compatibility
+- Working with external systems that use JSON Schema
+- Schema is simple and doesn't need complex validation
+- You want maximum flexibility in schema definition
+
+```python
+# Good use case for JSONValidator
+schema = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string"},
+        "count": {"type": "integer"}
+    }
+}
+```
+
+### Use PydanticValidator When:
+
+- You want type hints and IDE support
+- Schema has complex validation rules
+- You need nested models
+- You want rich field constraints (email, URLs, ranges, etc.)
+- You're building Python applications with type checking
+
+```python
+# Good use case for PydanticValidator
+class APIResponse(BaseModel):
+    status: Literal["success", "error"]
+    data: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    timestamp: datetime
+    request_id: str = Field(pattern=r'^[a-f0-9-]{36}$')
+```
+
+## Best Practices
+
+### 1. Add Field Descriptions
+
+Help the LLM understand what to generate:
+
+```python
+class Product(BaseModel):
+    name: str = Field(description="Product name")
+    price: float = Field(description="Price in USD", ge=0.0)
+    category: str = Field(description="Product category (electronics, clothing, etc.)")
+```
+
+### 2. Use Appropriate Constraints
+
+Don't over-constrain or under-constrain:
+
+```python
+# Good - reasonable constraints
+age: int = Field(ge=0, le=150)
+
+# Too strict - LLM might struggle
+age: int = Field(ge=18, le=65)  # What if extracting data about a child?
+
+# Too loose - allows invalid data
+age: int  # No constraints at all
+```
+
+### 3. Make Optional What's Truly Optional
+
+```python
+class Person(BaseModel):
+    name: str                      # Always required
+    email: str                     # Always required
+    phone: Optional[str] = None    # Truly optional
+    age: Optional[int] = None      # Might not be mentioned
+```
+
+### 4. Use Nested Models for Complex Structures
+
+```python
+# Good - clear structure
+class Address(BaseModel):
+    street: str
+    city: str
+
+class Person(BaseModel):
+    name: str
+    address: Address
+
+# Avoid - flat and unclear
+class Person(BaseModel):
+    name: str
+    address_street: str
+    address_city: str
+```
+
+### 5. Validate Early
+
+Catch issues before full enforcement:
+
+```python
+# Quick validation check
+test_output = '{"name": "test"}'
+result = validator.validate(test_output, schema)
+
+if result.status != ValidationStatus.VALID:
+    print("Schema might be too strict:")
+    print(result.errors)
+```
+
+## API Reference
+
+### JSONValidator
+
+```python
+class JSONValidator(BaseValidator):
+    def __init__(self)
+
+    def validate(
+        self,
+        output: str,
+        schema: Dict[str, Any]
+    ) -> ValidationResult
+
+    def repair(
+        self,
+        output: str,
+        errors: List[ValidationError]
+    ) -> str
+
+    def validate_and_repair(
+        self,
+        output: str,
+        schema: Dict[str, Any]
+    ) -> ValidationResult
+```
+
+### PydanticValidator
+
+```python
+class PydanticValidator(BaseValidator):
+    def __init__(self)
+
+    def validate(
+        self,
+        output: str,
+        schema: Type[BaseModel]
+    ) -> ValidationResult
+
+    def repair(
+        self,
+        output: str,
+        errors: List[ValidationError]
+    ) -> str
+
+    def validate_and_repair(
+        self,
+        output: str,
+        schema: Type[BaseModel]
+    ) -> ValidationResult
+```
+
+### ValidationResult
+
+```python
+class ValidationResult(BaseModel):
+    status: ValidationStatus              # VALID, INVALID, etc.
+    parsed_output: Optional[Any] = None   # Parsed data
+    errors: List[ValidationError] = []    # Validation errors
+    raw_output: str                      # Original output
+    repair_attempted: bool = False       # Was repair tried
+    repair_successful: bool = False      # Did repair succeed
+```
+
+### ValidationError
+
+```python
+class ValidationError(BaseModel):
+    path: str          # Field path (e.g., "user.email")
+    message: str       # Error message
+    expected: Any      # Expected type/value
+    actual: Any        # Actual value received
+    severity: str      # "error" or "warning"
+```
+
+### ValidationStatus
+
+```python
+class ValidationStatus(Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    REPAIRABLE = "repairable"
+    UNREPAIRABLE = "unrepairable"
+```
+
+---
+
+Ready to explore caching? Check out [Caching →](../caching)
